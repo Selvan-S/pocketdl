@@ -1,0 +1,69 @@
+# ============================================================
+# PocketDL - Git ignore
+# ============================================================
+
+# -------------------------
+# Python
+# -------------------------
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Coverage / test reports
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# -------------------------
+# Node / JavaScript
+# -------------------------
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Frontend build output
+**/dist/
+**/build/
+**/.vite/
+
+# -------------------------
+# Environment / secrets
+# -------------------------
+.env
+.env.*
+!.env.example
+
+# -------------------------
+# Runtime data
+# -------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# PocketDL temporary files
+/tmp/
+/**/tmp/
+
+# -------------------------
+# IDE / OS
+# -------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -------------------------
+# Local downloads
+# -------------------------
+/downloads/
+/**/downloads/

@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "PocketDL Capture",
+  "version": "0.2.1",
+  "description": "Capture HLS and DASH media requests and send them to a local PocketDL backend.",
+  "minimum_chrome_version": "110",
+  "permissions": [
+    "webRequest",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:8787/*",
+    "http://localhost:8787/*"
+  ],
+  "background": {
+    "service_worker": "dist/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "PocketDL Capture",
+    "default_popup": "popup.html"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "pocketdl",
+  "private": true,
+  "version": "0.2.1",
+  "workspaces": [
+    "apps/web",
+    "apps/browser-extension"
+  ],
+  "scripts": {
+    "web:dev": "npm --workspace apps/web run dev",
+    "web:build": "npm --workspace apps/web run build",
+    "web:test": "npm --workspace apps/web run test",
+    "extension:build": "npm --workspace apps/browser-extension run build",
+    "extension:typecheck": "npm --workspace apps/browser-extension run typecheck"
+  }
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PocketDL Capture</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    body { width: 360px; margin: 0; padding: 16px; background: #0a1020; color: #edf2ff; }
+    h1 { margin: 0 0 4px; font-size: 20px; }
+    p { margin: 0 0 12px; color: #8f9cb5; font-size: 12px; }
+    label { display: block; font-size: 11px; color: #8996ae; margin-bottom: 5px; }
+    input { width: 100%; box-sizing: border-box; border-radius: 9px; border: 1px solid #2a3652; background: #10182a; color: #fff; padding: 9px; }
+    button { border: 0; border-radius: 9px; padding: 8px 10px; background: #dfe8ff; color: #081021; font-weight: 700; cursor: pointer; }
+    button.save { margin-top: 8px; width: 100%; background: #2f6df6; color: #fff; }
+    button.download { width: 100%; margin-top: 7px; }
+    button:disabled { opacity: .6; cursor: default; }
+    #status { margin: 12px 0; font-size: 12px; color: #aeb9ce; }
+    .capture { display: grid; gap: 4px; border: 1px solid #25324c; border-radius: 10px; padding: 10px; margin-top: 8px; background: #10182a; }
+    .capture strong { overflow-wrap: anywhere; }
+    .capture span, .capture small, .muted { color: #8491aa; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <h1>PocketDL Capture</h1>
+  <p>Detects HLS, DASH and direct media requests and sends them to local PocketDL.</p>
+  <form id="settings">
+    <label for="backend-url">PocketDL backend</label>
+    <input id="backend-url" placeholder="http://127.0.0.1:8787">
+    <button class="save" type="submit">Save backend</button>
+  </form>
+  <div id="status">Checking…</div>
+  <div id="captures"></div>
+  <script type="module" src="dist/popup.js"></script>
+</body>
+</html>

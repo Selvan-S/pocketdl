@@ -1,0 +1,13 @@
+{
+  "name": "@pocketdl/browser-extension",
+  "private": true,
+  "version": "0.2.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}

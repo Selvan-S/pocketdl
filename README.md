@@ -1,0 +1,133 @@
+# PocketDL v0.2.1
+
+PocketDL is a local, maintainable downloader built around yt-dlp and FFmpeg. Version 0.2 adds the first browser-capture workflow for difficult HLS/DASH sites.
+
+## What is new
+
+- Chrome Manifest V3 extension for observing `.m3u8` and `.mpd` requests.
+- Captures page URL/title, Referer, Origin, User-Agent and non-sensitive request headers.
+- Local FastAPI capture API with CORS restricted to localhost and the PocketDL extension origin.
+- Persistent SQLite capture history.
+- Captured HLS/DASH downloads are routed to FFmpeg directly instead of forcing yt-dlp to reproduce a browser request.
+- Existing yt-dlp downloads, analysis, queueing, filenames and error diagnostics remain available.
+- Browser captures are visible in the React PWA and can be queued with a custom filename.
+- Automatic SQLite migrations preserve an existing v0.1.x database.
+
+## Architecture
+
+```text
+Chrome / Chromium
+      |
+      | webRequest observation
+      v
+PocketDL Capture Extension
+      |
+      | JSON over localhost
+      v
+FastAPI
+  |-- CaptureService -> SQLite
+  |-- QueueService
+  |      |-- standard source -> yt-dlp
+  |      `-- captured source -> FFmpeg + captured request context
+  `-- System / Analysis APIs
+      |
+      v
+React PWA
+```
+
+The browser extension uses the non-blocking `webRequest` API to observe requests. Manifest V3 still supports normal `webRequest` observation; only blocking modification requires the restricted `webRequestBlocking` permission.
+
+## Desktop development
+
+### Requirements
+
+- Python 3.11+
+- Node.js + npm
+- FFmpeg + ffprobe on PATH
+- Chrome/Chromium for extension testing
+
+### Backend
+
+```powershell
+cd services\api
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python -m app.main
+```
+
+Backend: `http://127.0.0.1:8787`
+Swagger: `http://127.0.0.1:8787/docs`
+
+### Web UI
+
+```powershell
+cd apps\web
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+### Browser extension
+
+From the repository root:
+
+```powershell
+npm install
+npm run extension:build
+```
+
+Then open:
+
+`chrome://extensions`
+
+Enable **Developer mode** → **Load unpacked** → select:
+
+`apps/browser-extension`
+
+The extension observes media requests on pages where it has host access. Chrome documents that `webRequest` requires the API permission plus host permissions for the requested URL and initiator.
+
+### Test workflow
+
+1. Start the FastAPI backend.
+2. Start the React PWA.
+3. Load the PocketDL Capture extension.
+4. Open a video page in Chrome.
+5. Play the video.
+6. When an HLS/DASH manifest is requested, the extension sends the captured request context to PocketDL.
+7. Open PocketDL and check **Browser captures**.
+8. Choose a filename and download the captured stream.
+
+The extension deliberately does not capture Cookie or Authorization headers in v0.2. Sites that genuinely require those values will be addressed by a separate, explicit browser-session feature rather than silently storing credentials.
+
+## Security model
+
+The backend stays bound to `127.0.0.1` by default. The capture API requires the `X-PocketDL-Extension: 0.2` header and JSON requests. CORS accepts the local web app and Chrome extension origins only.
+
+The extension is intentionally a capture/observation tool, not a request-blocking or request-modifying extension. Chrome's Manifest V3 migration guidance recommends declarativeNetRequest for blocking/modifying traffic; PocketDL does not need those capabilities for v0.2.
+
+## Tests
+
+Backend tests:
+
+```powershell
+cd services\api
+pytest -q
+```
+
+Extension typecheck/build:
+
+```powershell
+cd apps\browser-extension
+npm run typecheck
+npm run build
+```
+
+## Versioning
+
+- v0.1.x: local downloader foundation, queue, filenames, diagnostics, analysis.
+- v0.2.x: browser capture + captured media download path.
+- v0.3.x: richer format selection, real-time progress, browser-session options and cross-browser work.
+- v0.4.x: Termux/Android deployment.
