@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
 
 from .schemas import (
     AnalyzeRequest,
@@ -75,6 +75,12 @@ def capture_response(capture) -> CaptureResponse:
         headers=capture.headers,
         capture_type=capture.capture_type,
         content_type=capture.content_type,
+        size_bytes=capture.size_bytes,
+        duration_seconds=capture.duration_seconds,
+        width=capture.width,
+        height=capture.height,
+        metadata_status=capture.metadata_status.value,
+        metadata_error=capture.metadata_error,
         status=capture.status,
         created_at=capture.created_at,
         used_at=capture.used_at,
@@ -166,6 +172,7 @@ async def list_captures(request: Request) -> list[CaptureResponse]:
 async def create_capture(
     payload: CaptureCreateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_pocketdl_extension: str | None = Header(default=None),
 ) -> CaptureResponse:
     if x_pocketdl_extension != '0.2':
@@ -182,9 +189,11 @@ async def create_capture(
             headers=payload.headers,
             capture_type=CaptureType(payload.capture_type),
             content_type=payload.content_type,
+            content_length_bytes=payload.content_length_bytes,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    background_tasks.add_task(request.app.state.capture_service.enrich_metadata, capture.id)
     return capture_response(capture)
 
 

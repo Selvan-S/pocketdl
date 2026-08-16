@@ -5,6 +5,7 @@ const pending = new Map<string, PendingRequest>();
 const recentCaptureKeys = new Map<string, number>();
 const MAX_PENDING = 500;
 const CAPTURE_COOLDOWN_MS = 8_000;
+const manifestTabs = new Set<number>();
 
 function headerValue(headers: chrome.webRequest.HttpHeader[] | undefined, name: string): string | undefined {
   return headers?.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value;
@@ -25,6 +26,20 @@ function captureTypeFromContentType(contentType: string | undefined): CaptureTyp
   if (value === 'application/dash+xml') return 'dash';
   if (value.startsWith('video/') || value.startsWith('audio/')) return 'media';
   return null;
+}
+
+
+function isLikelyMediaSegment(url: string): boolean {
+  return /\/(?:segment|segments|chunk|chunks|fragment|fragments|init|init-segment|parts?)\b/i.test(url)
+    || /\.(?:m4s|cmfv|cmfa|ts)(?:$|[?#])/i.test(url)
+    || /(?:[?&](?:segment|chunk|fragment|part|range)=|[?&](?:seg|chunk|frag)=)/i.test(url);
+}
+
+function contentLength(headers: chrome.webRequest.HttpHeader[] | undefined): number | undefined {
+  const value = headerValue(headers, 'content-length');
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function shouldCaptureUrl(url: string, requestType?: string): CaptureType | null {
@@ -77,14 +92,20 @@ async function enrichRequest(requestId: string, details: chrome.webRequest.OnBef
 async function enrichResponse(requestId: string, details: chrome.webRequest.OnHeadersReceivedDetails): Promise<void> {
   const existing = pending.get(requestId);
   const contentType = headerValue(details.responseHeaders, 'content-type');
+  const sizeBytes = contentLength(details.responseHeaders);
   if (existing) {
     existing.contentType = contentType ?? existing.contentType;
     existing.captureType = existing.captureType || captureTypeFromContentType(contentType) || 'media';
+    existing.contentLengthBytes = sizeBytes ?? existing.contentLengthBytes;
+    if (existing.captureType === 'hls' || existing.captureType === 'dash') {
+      manifestTabs.add(existing.tabId);
+    }
     return;
   }
 
   const captureType = captureTypeFromContentType(contentType);
   if (!captureType || details.tabId < 0 || !shouldDeduplicate(details.tabId, details.url)) return;
+  if (captureType === 'media' && (manifestTabs.has(details.tabId) || isLikelyMediaSegment(details.url))) return;
 
   const item: PendingRequest = {
     url: details.url,
@@ -92,7 +113,11 @@ async function enrichResponse(requestId: string, details: chrome.webRequest.OnHe
     headers: {},
     captureType,
     contentType,
+    contentLengthBytes: sizeBytes,
   };
+  if (captureType === 'hls' || captureType === 'dash') {
+    manifestTabs.add(details.tabId);
+  }
   pending.set(requestId, item);
   try {
     const tab = await chrome.tabs.get(details.tabId);
@@ -131,6 +156,7 @@ async function sendCapture(requestId: string, statusCode: number): Promise<void>
         headers,
         capture_type: item.captureType,
         content_type: item.contentType ?? null,
+        content_length_bytes: item.contentLengthBytes ?? null,
       }),
     });
   } catch {
@@ -142,6 +168,7 @@ chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     const type = shouldCaptureUrl(details.url, details.type);
     if (!type || details.tabId < 0 || !shouldDeduplicate(details.tabId, details.url)) return;
+    if (type === 'media' && (manifestTabs.has(details.tabId) || isLikelyMediaSegment(details.url))) return;
     if (pending.size >= MAX_PENDING) {
       const oldest = pending.keys().next().value;
       if (oldest) pending.delete(oldest);
@@ -185,3 +212,11 @@ chrome.webRequest.onErrorOccurred.addListener(
   (details) => { pending.delete(details.requestId); },
   { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
 );
+
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  manifestTabs.delete(tabId);
+  for (const key of recentCaptureKeys.keys()) {
+    if (key.startsWith(`${tabId}:`)) recentCaptureKeys.delete(key);
+  }
+});

@@ -8,4 +8,5 @@ export interface PendingRequest {
   headers: Record<string, string>;
   captureType: CaptureType;
   contentType?: string;
+  contentLengthBytes?: number;
 }
