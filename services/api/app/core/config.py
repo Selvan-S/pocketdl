@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     app_name: str = 'PocketDL'
-    app_version: str = '0.2.1'
+    app_version: str = '0.2.2'
     host: str = '127.0.0.1'
     port: int = 8787
     database_path: Path = Field(default=Path.home() / '.pocketdl' / 'pocketdl.db')

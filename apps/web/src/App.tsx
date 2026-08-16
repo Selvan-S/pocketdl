@@ -133,47 +133,53 @@ export default function App() {
         {message && <div className="message" role="status">{message}</div>}
       </section>
 
-      <section className="toolbar">
-        <div>
-          <div className="eyebrow">BROWSER CAPTURE</div>
-          <h2>Captured streams</h2>
-          <span>{captures.length} unique stream(s) · signed URLs are refreshed automatically</span>
+      <details className="section-collapsible" open>
+        <summary className="section-collapsible-summary">
+          <div>
+            <div className="eyebrow">BROWSER CAPTURE</div>
+            <h2>Captured streams</h2>
+            <span>{captures.length} unique stream(s) · newest signed URL is kept automatically</span>
+          </div>
+          <span className="section-chevron">−</span>
+        </summary>
+        <CaptureList
+          items={captures}
+          onDownload={async (id: string, payload: CaptureDownloadRequest) => {
+            await api.downloadCapture(id, payload);
+            setMessage('Captured stream added to queue.');
+            await refresh();
+          }}
+          onDelete={async (id: string) => {
+            await api.deleteCapture(id);
+            await refresh();
+          }}
+        />
+      </details>
+
+      <details className="section-collapsible" open>
+        <summary className="section-collapsible-summary">
+          <div>
+            <div className="eyebrow">DOWNLOAD QUEUE</div>
+            <h2>Downloads</h2>
+            <span>{downloads.length} item(s) · {status?.active_downloads ?? 0} active · {status?.queued_downloads ?? 0} queued</span>
+          </div>
+          <span className="section-chevron">−</span>
+        </summary>
+        <div className="section-toolbar-actions">
+          <button className="secondary compact" disabled={updating} onClick={updateYtDlp}>
+            {updating ? 'Updating…' : 'Update yt-dlp'}
+          </button>
         </div>
-      </section>
-
-      <CaptureList
-        items={captures}
-        onDownload={async (id: string, payload: CaptureDownloadRequest) => {
-          await api.downloadCapture(id, payload);
-          setMessage('Captured stream added to queue.');
-          await refresh();
-        }}
-        onDelete={async (id: string) => {
-          await api.deleteCapture(id);
-          await refresh();
-        }}
-      />
-
-      <section className="toolbar">
-        <div>
-          <div className="eyebrow">DOWNLOAD QUEUE</div>
-          <h2>Downloads</h2>
-          <span>{downloads.length} item(s) · {status?.active_downloads ?? 0} active · {status?.queued_downloads ?? 0} queued</span>
-        </div>
-        <button className="secondary" disabled={updating} onClick={updateYtDlp}>
-          {updating ? 'Updating…' : 'Update yt-dlp'}
-        </button>
-      </section>
-
-      <DownloadList
-        items={downloads}
-        onCancel={async (id) => { await api.cancelDownload(id); await refresh(); }}
-        onDelete={async (id) => { await api.deleteDownload(id); await refresh(); }}
-      />
+        <DownloadList
+          items={downloads}
+          onCancel={async (id) => { await api.cancelDownload(id); await refresh(); }}
+          onDelete={async (id) => { await api.deleteDownload(id); await refresh(); }}
+        />
+      </details>
 
       <footer>
         <span className="footer-path">Downloads: {settings?.download_directory ?? 'Unavailable'}</span>
-        <span>PocketDL v{status?.app_version ?? '0.2.1'}</span>
+        <span>PocketDL v{status?.app_version ?? '0.2.2'}</span>
       </footer>
     </main>
   );

@@ -9,6 +9,8 @@ declare namespace chrome {
   namespace tabs {
     interface Tab { id?: number; url?: string; title?: string; }
     function get(tabId: number): Promise<Tab>;
+    interface RemovedEvent { addListener(callback: (tabId: number) => void): void; }
+    const onRemoved: RemovedEvent;
   }
 
   namespace webRequest {

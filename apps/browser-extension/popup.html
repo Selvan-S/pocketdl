@@ -16,9 +16,14 @@
     button.download { width: 100%; margin-top: 7px; }
     button:disabled { opacity: .6; cursor: default; }
     #status { margin: 12px 0; font-size: 12px; color: #aeb9ce; }
-    .capture { display: grid; gap: 4px; border: 1px solid #25324c; border-radius: 10px; padding: 10px; margin-top: 8px; background: #10182a; }
-    .capture strong { overflow-wrap: anywhere; }
-    .capture span, .capture small, .muted { color: #8491aa; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .capture { display: block; border: 1px solid #25324c; border-radius: 10px; margin-top: 8px; background: #10182a; overflow: hidden; }
+    .capture summary { cursor: pointer; list-style: none; padding: 10px; display: grid; gap: 4px; }
+    .capture summary::-webkit-details-marker { display: none; }
+    .capture summary::after { content: '＋'; justify-self: end; grid-row: 1 / span 2; grid-column: 2; color: #7d8aa4; }
+    .capture[open] summary::after { content: '−'; }
+    .capture-title { overflow-wrap: anywhere; font-weight: 700; }
+    .capture-meta, .capture-body span, .capture-body small, .muted { color: #8491aa; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .capture-body { padding: 0 10px 10px; display: grid; gap: 5px; }
   </style>
 </head>
 <body>

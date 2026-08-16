@@ -211,3 +211,81 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
   .capture-card .capture-actions button { width: auto; }
   .settings-actions { display: grid; grid-template-columns: 1fr; }
 }
+
+/* v0.2.2 capture stability and collapsible sections */
+.section-collapsible {
+  margin-top: 26px;
+}
+.section-collapsible-summary {
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+  padding: 4px 2px 12px;
+}
+.section-collapsible-summary::-webkit-details-marker { display: none; }
+.section-collapsible-summary h2 { margin: 4px 0; }
+.section-collapsible-summary span { color: #7f8da8; font-size: 12px; }
+.section-chevron {
+  color: #a9b6cf !important;
+  font-size: 18px !important;
+  line-height: 1;
+  min-width: 18px;
+  text-align: center;
+}
+.section-toolbar-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 10px;
+}
+.capture-card {
+  padding: 0;
+  overflow: hidden;
+}
+.capture-card > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 16px;
+}
+.capture-card > summary::-webkit-details-marker { display: none; }
+.capture-summary-side {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.capture-chevron {
+  color: #8190aa !important;
+  font-size: 18px !important;
+  line-height: 1;
+}
+.capture-card[open] .capture-chevron { font-size: 0 !important; }
+.capture-card[open] .capture-chevron::after { content: '−'; font-size: 18px; }
+.capture-expanded {
+  padding: 0 16px 16px;
+  border-top: 1px solid #202b44;
+}
+.capture-warning {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #3a2720;
+  color: #ffbe92 !important;
+  font-weight: 700;
+}
+.capture-metadata-warning {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: #261e1f;
+  border: 1px solid #473034;
+  color: #efb6b6;
+  font-size: 11px;
+}
+.capture-source-row { align-items: center; }
+
+@media (max-width: 680px) {
+  .section-collapsible-summary { flex-direction: row; }
+  .capture-card > summary { padding: 13px; }
+  .capture-expanded { padding: 0 13px 13px; }
+}

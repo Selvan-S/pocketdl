@@ -1,6 +1,6 @@
-# PocketDL v0.2.1
+# PocketDL v0.2.2
 
-PocketDL is a local, maintainable downloader built around yt-dlp and FFmpeg. Version 0.2 adds the first browser-capture workflow for difficult HLS/DASH sites.
+PocketDL is a local, maintainable downloader built around yt-dlp and FFmpeg. Version 0.2 adds the first browser-capture workflow for difficult HLS/DASH sites; 0.2.2 focuses on capture hygiene, metadata, and scrolling UX.
 
 ## What is new
 
@@ -11,6 +11,9 @@ PocketDL is a local, maintainable downloader built around yt-dlp and FFmpeg. Ver
 - Captured HLS/DASH downloads are routed to FFmpeg directly instead of forcing yt-dlp to reproduce a browser request.
 - Existing yt-dlp downloads, analysis, queueing, filenames and error diagnostics remain available.
 - Browser captures are visible in the React PWA and can be queued with a custom filename.
+- Obvious media segments are filtered, historical duplicates are collapsed, and the newest signed URL is retained.
+- Captures expose best-effort duration, size, and dimensions using browser Content-Length and asynchronous ffprobe enrichment.
+- Capture cards and major queue/capture sections are collapsible.
 - Automatic SQLite migrations preserve an existing v0.1.x database.
 
 ## Architecture
@@ -128,6 +131,6 @@ npm run build
 ## Versioning
 
 - v0.1.x: local downloader foundation, queue, filenames, diagnostics, analysis.
-- v0.2.x: browser capture + captured media download path.
+- v0.2.x: browser capture + captured media download path + capture metadata/UX hardening.
 - v0.3.x: richer format selection, real-time progress, browser-session options and cross-browser work.
 - v0.4.x: Termux/Android deployment.

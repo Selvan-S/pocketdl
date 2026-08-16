@@ -93,6 +93,12 @@ export interface CaptureItem {
   headers: Record<string, string>;
   capture_type: 'hls' | 'dash' | 'media';
   content_type: string | null;
+  size_bytes: number | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  metadata_status: 'pending' | 'ready' | 'failed';
+  metadata_error: string | null;
   status: 'captured' | 'used';
   created_at: string;
   used_at: string | null;

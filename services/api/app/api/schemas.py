@@ -140,6 +140,7 @@ class CaptureCreateRequest(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     capture_type: Literal['hls', 'dash', 'media'] = 'hls'
     content_type: str | None = Field(default=None, max_length=300)
+    content_length_bytes: int | None = Field(default=None, ge=0)
 
     @field_validator('media_url', 'page_url', 'referer')
     @classmethod
@@ -178,6 +179,12 @@ class CaptureResponse(BaseModel):
     headers: dict[str, str]
     capture_type: CaptureType
     content_type: str | None
+    size_bytes: int | None
+    duration_seconds: float | None
+    width: int | None
+    height: int | None
+    metadata_status: str
+    metadata_error: str | None
     status: CaptureStatus
     created_at: datetime
     used_at: datetime | None
