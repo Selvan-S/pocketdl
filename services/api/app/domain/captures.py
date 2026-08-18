@@ -96,3 +96,44 @@ class CapturedSource:
     status: CaptureStatus
     created_at: datetime
     used_at: datetime | None
+
+
+# Configurable heuristics for the "very short/wrong capture" backlog item --
+# deliberately a flag surfaced to the UI, never a hard delete, since a
+# legitimate-looking request can still be exactly what the user wants even if
+# it trips one of these signals.
+SHORT_DURATION_SECONDS = 10.0
+TINY_MEDIA_SIZE_BYTES = 50_000
+
+# Mirrors the browser extension's client-side heuristic
+# (apps/browser-extension/src/background.ts, isLikelyMediaSegment) as a
+# backend-side backstop: captures made before that filter existed, or from
+# any future non-extension client, still get flagged here.
+_SEGMENT_PATH_RE = re.compile(r'/(?:segments?|chunks?|fragments?|init|init-segment|parts?)\b', re.IGNORECASE)
+_SEGMENT_EXTENSION_RE = re.compile(r'\.(?:m4s|cmfv|cmfa|ts)(?:$|[?#])', re.IGNORECASE)
+_SEGMENT_QUERY_RE = re.compile(r'[?&](?:segment|chunk|fragment|part|range|seg|frag)=', re.IGNORECASE)
+
+
+def looks_like_media_segment(media_url: str) -> bool:
+    return bool(
+        _SEGMENT_PATH_RE.search(media_url)
+        or _SEGMENT_EXTENSION_RE.search(media_url)
+        or _SEGMENT_QUERY_RE.search(media_url)
+    )
+
+
+def is_suspicious_capture(capture: CapturedSource) -> bool:
+    """True if this capture is likely a fragment/segment rather than the
+    intended media, or otherwise implausibly short.
+
+    Applies to every capture_type, unlike the duration-only, media-only check
+    it replaces: an hls/dash capture whose *probed* duration turns out to be
+    a couple of seconds -- the exact scenario CLAUDE.md's backlog cites --
+    previously could never be flagged, since capture_type=media was the only
+    kind checked at all.
+    """
+    if capture.duration_seconds is not None and capture.duration_seconds < SHORT_DURATION_SECONDS:
+        return True
+    if capture.capture_type is CaptureType.MEDIA and capture.size_bytes is not None and capture.size_bytes < TINY_MEDIA_SIZE_BYTES:
+        return True
+    return looks_like_media_segment(capture.media_url)

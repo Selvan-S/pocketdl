@@ -123,8 +123,18 @@ enrichment succeeding or a future HLS segment-enumeration estimate — the
 latter is unimplemented; exact size before download may be impossible for
 some HLS/DASH sources without it.
 
-### Short/wrong captures
-Players can issue tiny media requests that are not the actual video. These should be filtered or clearly marked, without deleting all short legitimate media.
+### Short/wrong captures — improved
+Suspicious captures are now marked, never deleted. `is_suspicious_capture` in
+the domain layer flags short duration (any capture type), tiny direct-media
+size, and segment/chunk-shaped URLs; the result is exposed as
+`looks_suspicious` on the capture API and shown in both the PWA and the
+extension popup.
+
+The previous check was a hardcoded 10s threshold living in React that only
+applied to `capture_type=media`, so an hls/dash capture that probed out to a
+couple of seconds could never be flagged. Thresholds are module-level
+constants (`SHORT_DURATION_SECONDS`, `TINY_MEDIA_SIZE_BYTES`) — tunable in one
+place, but not yet user-configurable at runtime.
 
 ### Mobile browser capture
 Verified working on-device using the Quetta browser (Chromium-based, supports

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Suspicious/short capture detection
+- Moved short-media detection out of the React component and into the domain
+  layer as `is_suspicious_capture`, exposed as `looks_suspicious` on
+  `CaptureResponse` and rendered in both the PWA and the extension popup
+  (previously the extension popup showed no warning at all).
+- The old check was a hardcoded 10s duration threshold that only applied to
+  `capture_type=media`, so an hls/dash capture whose probed duration turned
+  out to be ~2s — the exact scenario CLAUDE.md's backlog describes — could
+  never be flagged. Duration now applies to every capture type.
+- Added two signals the roadmap asked for and the duration-only check missed:
+  tiny direct-media size (<50KB; direct media only, since hls/dash
+  `size_bytes` is deliberately unset), and segment/chunk-shaped URLs. The
+  latter mirrors the extension's own client-side `isLikelyMediaSegment`
+  filter as a backend-side backstop, so captures predating that filter, or
+  from any non-extension client, are still caught.
+- Still a flag, never a hard delete, per the roadmap's explicit requirement —
+  a legitimate short clip stays downloadable, just marked. Thresholds are
+  module-level constants, tunable in one place but not yet user-configurable
+  at runtime; that and MIME-based fragment detection remain open.
+- Added 8 domain tests covering each signal plus the cases that must NOT be
+  flagged (normal-length streams, plausible full media, and hls/dash size
+  which must never factor in). Full backend suite: 35/35.
+
 ### Capture deduplication and size accuracy
 - Fixed duplicate capture cards for signed tokens embedded in the media URL's
   *path* rather than its query string (e.g.

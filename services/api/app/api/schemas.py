@@ -185,6 +185,7 @@ class CaptureResponse(BaseModel):
     height: int | None
     metadata_status: str
     metadata_error: str | None
+    looks_suspicious: bool
     status: CaptureStatus
     created_at: datetime
     used_at: datetime | None

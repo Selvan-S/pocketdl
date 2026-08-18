@@ -100,14 +100,31 @@ Still open, not attempted:
   ("—"), which side-steps the "never show a wrong exact number" requirement
   without yet building the labeled-estimate UI this line originally asked for.
 
-## Short-media filtering
-Use configurable heuristics rather than hard deletes.
-Possible signals:
-- duration < threshold.
-- tiny content length.
-- URL looks like segment/chunk.
-- MIME/content-type is clearly a fragment.
-- manifest/direct-media relationship.
+## Short-media filtering — mostly done
+Implemented as a flag, never a hard delete, per this section's original
+requirement. `is_suspicious_capture` in the domain layer is now the single
+source of truth, surfaced as `looks_suspicious` on `CaptureResponse` and
+rendered in both the PWA and the extension popup.
+
+Signals implemented:
+- duration < threshold (`SHORT_DURATION_SECONDS`, 10s) — now applied to
+  **every** capture type. Previously this was a hardcoded client-side check in
+  React that only ran for `capture_type=media`, so an hls/dash capture that
+  probed out to ~2s (the exact case CLAUDE.md's backlog cites) could never be
+  flagged at all.
+- tiny content length (`TINY_MEDIA_SIZE_BYTES`, 50KB) — direct media only,
+  since hls/dash `size_bytes` is deliberately unset (it would be the
+  manifest's size, not the media's).
+- URL looks like segment/chunk — backend-side backstop mirroring the
+  extension's own `isLikelyMediaSegment` filter, so captures predating that
+  filter or from any non-extension client are still caught.
+
+Still open, not attempted:
+- MIME/content-type fragment detection as a distinct signal (the URL-shape
+  check already covers the common cases in practice).
+- manifest/direct-media relationship as a signal.
+- Making the thresholds user-configurable at runtime; they are currently
+  module-level constants, tunable in one place but not exposed in settings.
 
 ---
 

@@ -65,8 +65,6 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
     }
   };
 
-  const suspicious = item.capture_type === 'media' && item.duration_seconds != null && item.duration_seconds < 10;
-
   return (
     <details className="capture-card">
       <summary className="capture-summary">
@@ -85,7 +83,7 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
           <span className="capture-source-kind">{item.capture_type.toUpperCase()}</span>
           {item.content_type && <span>{item.content_type}</span>}
           <span>{metadataLabel(item)}</span>
-          {suspicious && <span className="capture-warning">Very short media</span>}
+          {item.looks_suspicious && <span className="capture-warning">Possibly a fragment, not the full video</span>}
         </div>
       </summary>
 

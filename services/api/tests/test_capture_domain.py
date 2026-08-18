@@ -1,4 +1,42 @@
-from app.domain.captures import CaptureType, make_source_key, normalize_media_url
+from datetime import datetime, timezone
+
+from app.domain.captures import (
+    CaptureStatus,
+    CaptureType,
+    CapturedSource,
+    MetadataStatus,
+    is_suspicious_capture,
+    looks_like_media_segment,
+    make_source_key,
+    normalize_media_url,
+)
+
+
+def _make_capture(**overrides) -> CapturedSource:
+    defaults = dict(
+        id='test',
+        source_key='key',
+        media_url='https://cdn.example/video/master.m3u8',
+        page_url='https://site.example/watch',
+        page_title='Example',
+        referer=None,
+        origin=None,
+        user_agent=None,
+        headers={},
+        capture_type=CaptureType.HLS,
+        content_type='application/vnd.apple.mpegurl',
+        size_bytes=None,
+        duration_seconds=None,
+        width=None,
+        height=None,
+        metadata_status=MetadataStatus.READY,
+        metadata_error=None,
+        status=CaptureStatus.CAPTURED,
+        created_at=datetime.now(timezone.utc),
+        used_at=None,
+    )
+    defaults.update(overrides)
+    return CapturedSource(**defaults)
 
 
 def test_normalize_media_url_ignores_query_string_signed_tokens() -> None:
@@ -56,3 +94,61 @@ def test_make_source_key_stable_across_path_token_refresh() -> None:
         CaptureType.HLS,
     )
     assert first == second
+
+
+def test_looks_like_media_segment_matches_common_fragment_patterns() -> None:
+    assert looks_like_media_segment('https://cdn.example/hls/segment-0042.ts')
+    assert looks_like_media_segment('https://cdn.example/hls/init-segment.mp4')
+    assert looks_like_media_segment('https://cdn.example/dash/chunk_1_00001.m4s')
+    assert looks_like_media_segment('https://cdn.example/video.mp4?range=0-1023')
+
+
+def test_looks_like_media_segment_ignores_ordinary_media_urls() -> None:
+    assert not looks_like_media_segment('https://cdn.example/videos/my-cool-video.mp4')
+    assert not looks_like_media_segment('https://cdn.example/hls/master.m3u8')
+
+
+def test_is_suspicious_capture_flags_short_duration_regardless_of_type() -> None:
+    """An hls/dash capture that probes out to a couple of seconds must be
+    flagged too -- the previous duration-only check applied to
+    capture_type=media exclusively, so this exact scenario (cited in
+    CLAUDE.md's backlog) could never be caught."""
+    capture = _make_capture(capture_type=CaptureType.HLS, duration_seconds=2.0)
+    assert is_suspicious_capture(capture)
+
+
+def test_is_suspicious_capture_allows_normal_duration() -> None:
+    capture = _make_capture(capture_type=CaptureType.HLS, duration_seconds=1800.0)
+    assert not is_suspicious_capture(capture)
+
+
+def test_is_suspicious_capture_flags_tiny_direct_media_size() -> None:
+    capture = _make_capture(capture_type=CaptureType.MEDIA, media_url='https://cdn.example/video.mp4', size_bytes=2_048)
+    assert is_suspicious_capture(capture)
+
+
+def test_is_suspicious_capture_ignores_size_for_hls_dash() -> None:
+    """size_bytes is intentionally unset for hls/dash (it would be the
+    manifest's size, not the media's) -- it must never factor into this
+    check for those types."""
+    capture = _make_capture(capture_type=CaptureType.HLS, size_bytes=100)
+    assert not is_suspicious_capture(capture)
+
+
+def test_is_suspicious_capture_flags_segment_like_url() -> None:
+    capture = _make_capture(
+        capture_type=CaptureType.MEDIA,
+        media_url='https://cdn.example/dash/chunk_1_00001.m4s',
+        size_bytes=5_000_000,
+    )
+    assert is_suspicious_capture(capture)
+
+
+def test_is_suspicious_capture_allows_plausible_capture() -> None:
+    capture = _make_capture(
+        capture_type=CaptureType.MEDIA,
+        media_url='https://cdn.example/videos/my-cool-video.mp4',
+        size_bytes=250_000_000,
+        duration_seconds=1800.0,
+    )
+    assert not is_suspicious_capture(capture)
