@@ -20,12 +20,45 @@ repository, so `git pull && bash scripts/termux-install.sh` is the update path.
 It will:
 
 1. Request Termux storage permission (`termux-setup-storage`).
-2. Install the M1 runtime — git, Python, Node.js LTS, FFmpeg, aria2.
-3. Install the build toolchain needed to compile the Python dependencies.
-4. Create `services/api/.venv` and install `services/api/requirements.txt`.
-5. Write `~/.pocketdl/.env` targeting `/sdcard/Download/PocketDL`.
-6. Build the web UI from the committed npm lockfile.
-7. Symlink a `pocketdl` launcher into `$PREFIX/bin`.
+2. Install the M1 runtime — git, Python, FFmpeg — and the build toolchain.
+3. Create `services/api/.venv` and install `services/api/requirements.txt`.
+4. Write `~/.pocketdl/.env` targeting `/sdcard/Download/PocketDL`.
+5. Build the web UI from the committed npm lockfile.
+6. Symlink a `pocketdl` launcher into `$PREFIX/bin`.
+
+## How this coexists with your other projects
+
+The intended layout is device-global tools plus a per-project virtualenv:
+
+```text
+Termux global (pkg)          Projects
+├── python                   ├── PocketDL
+├── nodejs                   │   └── services/api/.venv
+├── ffmpeg                   ├── Project B
+├── git                      │   └── .venv
+└── rust                     └── Project C
+                                 └── .venv
+```
+
+The installer follows this: `pkg` for shared tools, a virtualenv for PocketDL's
+Python dependencies. It never installs Python packages globally.
+
+**Node is treated as yours.** Termux ships `nodejs` and `nodejs-lts` as mutually
+exclusive packages — installing one removes the other. The installer therefore
+keeps whatever Node you already have as long as it is v20 or newer, and only
+installs `nodejs-lts` when no Node is present. If your Node is too old it stops
+and asks you to upgrade it yourself, rather than swapping a global tool other
+projects depend on.
+
+**A virtualenv elsewhere.** If you keep virtualenvs outside the default layout,
+set `POCKETDL_VENV` in `~/.pocketdl/.env`:
+
+```bash
+POCKETDL_VENV=/data/data/com.termux/files/home/.venvs/pocketdl
+```
+
+`start.sh` and `termux-doctor.sh` check `POCKETDL_VENV` first, then
+`services/api/.venv`, then a repo-root `.venv`.
 
 ## Why a build toolchain is required
 

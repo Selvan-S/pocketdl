@@ -33,17 +33,16 @@ termux-setup-storage || true
 
 printf '==> Installing Termux packages\n'
 pkg update -y
-# python/nodejs-lts/ffmpeg/git are the M1 runtime. The remainder is the build
-# toolchain: Termux uses Bionic rather than glibc, so manylinux wheels do not
-# apply and pydantic-core, uvloop, httptools, watchfiles, curl_cffi, brotli and
-# pycryptodomex are compiled from source here.
+
+# These are shared, device-global tools, deliberately installed with pkg rather
+# than vendored per project. git/python/ffmpeg are the M1 runtime; the rest is
+# the build toolchain. Termux uses Bionic rather than glibc, so manylinux wheels
+# do not apply and pydantic-core, uvloop, httptools, watchfiles, curl_cffi,
+# brotli and pycryptodomex are compiled from source into the venv.
 pkg install -y \
   git \
   python \
-  python-pip \
-  nodejs-lts \
   ffmpeg \
-  aria2 \
   clang \
   make \
   binutils \
@@ -51,6 +50,32 @@ pkg install -y \
   rust \
   libffi \
   openssl
+
+# Termux ships `nodejs` (current) and `nodejs-lts` as MUTUALLY EXCLUSIVE
+# packages: installing one removes the other. Node is a device-global tool that
+# other projects depend on, so never swap it out from under them. Only install
+# when there is no usable Node already.
+NODE_MIN_MAJOR=20
+if command -v node >/dev/null 2>&1; then
+  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  if [ "${node_major:-0}" -ge "$NODE_MIN_MAJOR" ]; then
+    printf '    keeping existing Node %s (device-global, shared with other projects)\n' "$(node --version)"
+  else
+    printf '    Node %s is older than v%s and cannot build the web UI.\n' "$(node --version)" "$NODE_MIN_MAJOR" >&2
+    printf '    Upgrade it yourself so you control which Termux node package wins:\n' >&2
+    printf '      pkg install nodejs-lts   # or: pkg install nodejs\n' >&2
+    exit 1
+  fi
+else
+  printf '    no Node found; installing nodejs-lts\n'
+  pkg install -y nodejs-lts
+fi
+
+# Optional. aria2 only accelerates direct downloads; python-pip is a separate
+# package on some Termux versions and bundled with python on others.
+for optional in aria2 python-pip; do
+  pkg install -y "$optional" || printf '    optional package %s unavailable, continuing\n' "$optional"
+done
 
 printf '==> Creating Python virtualenv\n'
 if [ ! -x "$VENV_DIR/bin/python" ]; then

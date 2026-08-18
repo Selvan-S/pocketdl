@@ -21,6 +21,13 @@
   than `/sdcard/Download`.
 - Added `scripts/termux-doctor.sh`, mechanical M1/M2 verification that exits
   non-zero on M1 failure.
+- The installer no longer forces `nodejs-lts`. Termux ships `nodejs` and
+  `nodejs-lts` as mutually exclusive packages, so `pkg install -y nodejs-lts`
+  would have silently swapped a device-global tool other projects depend on. It
+  now keeps any existing Node >= v20 and only installs when none is present.
+- `start.sh` and `termux-doctor.sh` resolve the virtualenv via `POCKETDL_VENV`,
+  then `services/api/.venv`, then a repo-root `.venv`, so a virtualenv kept
+  outside the default layout is supported.
 - `scripts/start.sh` and `scripts/pocketdl` now resolve the checkout from their
   own location instead of a hardcoded `~/.pocketdl/app`.
 - Marked all scripts executable in the Git index; they were committed 100644 and

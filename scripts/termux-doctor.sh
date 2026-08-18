@@ -127,10 +127,19 @@ fi
 if [ "$CHECK_M2" -eq 1 ]; then
   section 'M2 — Backend readiness (reported, does not affect M1)'
 
-  # bin/python on Termux; Scripts/python.exe when the same repo is checked out
-  # on the Windows development machine.
+  # Same resolution order as start.sh: POCKETDL_VENV override, then the default
+  # layout, then a repo-root venv. bin/python on Termux, Scripts/python.exe when
+  # the same repo is checked out on the Windows development machine.
+  [ -f "$HOME/.pocketdl/.env" ] && . "$HOME/.pocketdl/.env"
   VENV_PYTHON=''
-  for candidate in "$VENV_DIR/bin/python" "$VENV_DIR/Scripts/python.exe"; do
+  for candidate in \
+    "${POCKETDL_VENV:-}/bin/python" \
+    "${POCKETDL_VENV:-}/Scripts/python.exe" \
+    "$VENV_DIR/bin/python" \
+    "$VENV_DIR/Scripts/python.exe" \
+    "$REPO_DIR/.venv/bin/python" \
+    "$REPO_DIR/.venv/Scripts/python.exe" ; do
+    case "$candidate" in /bin/python|/Scripts/python.exe) continue ;; esac
     [ -x "$candidate" ] && { VENV_PYTHON="$candidate"; break; }
   done
 
