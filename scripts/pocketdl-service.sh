@@ -12,7 +12,12 @@
 # ~/.pocketdl/run/service.pid.
 set -uo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The Termux:Boot hook invokes this script through a symlink
+# (~/.termux/boot/pocketdl-start -> this file). dirname on ${BASH_SOURCE[0]}
+# would resolve against the symlink's own location, not its target, and land
+# outside the repo entirely. Resolve the real path first, same as scripts/pocketdl.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 RUN_DIR="$HOME/.pocketdl/run"
 PID_FILE="$RUN_DIR/service.pid"
 STATUS_FILE="$RUN_DIR/status"
