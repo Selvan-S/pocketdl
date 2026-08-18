@@ -68,6 +68,14 @@ class CaptureService:
         source_key = make_source_key(media_url, page_url, capture_type)
         now = datetime.now(timezone.utc)
         safe_headers = self._safe_headers(headers)
+        # For hls/dash, content_length_bytes is the Content-Length of the
+        # fetched manifest text file, not the underlying media -- storing it
+        # as size_bytes would show a tiny, misleading number (e.g. "500 B")
+        # for a multi-hundred-MB stream. Only a direct media request's
+        # Content-Length is the media's actual size; leave hls/dash size
+        # unknown until ffprobe enrichment (or a future segment-enumeration
+        # estimate) can determine it honestly.
+        reported_size_bytes = content_length_bytes if capture_type is CaptureType.MEDIA else None
         existing = await self.repository.find_by_source_key(source_key)
         if existing:
             existing.media_url = media_url
@@ -78,7 +86,7 @@ class CaptureService:
             existing.user_agent = user_agent[:500] if user_agent else existing.user_agent
             existing.headers = safe_headers or existing.headers
             existing.content_type = content_type or existing.content_type
-            existing.size_bytes = content_length_bytes or existing.size_bytes
+            existing.size_bytes = reported_size_bytes or existing.size_bytes
             existing.duration_seconds = None
             existing.width = None
             existing.height = None
@@ -102,7 +110,7 @@ class CaptureService:
             headers=safe_headers,
             capture_type=capture_type,
             content_type=content_type,
-            size_bytes=content_length_bytes,
+            size_bytes=reported_size_bytes,
             duration_seconds=None,
             width=None,
             height=None,

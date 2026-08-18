@@ -1,6 +1,41 @@
 # Changelog
 
-## Unreleased — Android/Termux M1–M6
+## Unreleased
+
+### Capture deduplication and size accuracy
+- Fixed duplicate capture cards for signed tokens embedded in the media URL's
+  *path* rather than its query string (e.g.
+  `/media/8f7a2b91c3d445fabb0e7a1c9d4e6f21/master.m3u8`, token rotating on
+  every request). Query-string tokens were already handled — the whole query
+  is dropped during normalization — but a path-embedded token changed the
+  dedup hash on every refresh, since the path was previously kept verbatim.
+  `normalize_media_url` now replaces path segments that look like opaque,
+  request-scoped tokens (UUIDs, long hex strings, long mixed alphanumeric
+  strings) with a placeholder before hashing. Deliberately conservative: pure
+  numeric segments and short/word-like segments are left untouched, so
+  distinct videos, quality variants (`master.m3u8` vs `720p.m3u8`), and
+  numeric content IDs remain distinguishable. Historical captures self-heal
+  on the next backend start via the existing startup re-keying pass — no
+  migration needed. Known remaining gap, not attempted here: grouping a
+  master manifest with its own quality-variant sub-manifests into one card is
+  a different problem (they have genuinely different paths, not just a
+  rotating token) and is left for later, as the roadmap already scopes it
+  separately.
+- Fixed hls/dash captures showing a tiny, wrong media size (e.g. "500 B" for
+  a real multi-hundred-MB stream). The browser reports `Content-Length` for
+  whatever it fetched — for hls/dash that is the manifest *text file*, not
+  the media — and it was being stored directly as `size_bytes`. Only a direct
+  `media` capture's `Content-Length` is now stored; hls/dash size is left
+  unknown (shown as "—") until ffprobe enrichment determines it, which is
+  honest given true HLS/DASH size generally requires enumerating every
+  segment — a further improvement explicitly left to a later pass, not
+  attempted here.
+- Added `services/api/tests/test_capture_domain.py` (7 tests) and 3 new tests
+  in `test_capture_service.py` covering both fixes plus the cases that must
+  NOT collapse (distinct variants, distinct slugs, distinct numeric IDs).
+  Full suite: 27/27 passing, no regressions.
+
+### Android/Termux M1–M6 baseline
 
 - Fixed `pocketdl-service.sh` resolving its own location to `~/.termux`
   instead of the repository when started via the Termux:Boot hook, which

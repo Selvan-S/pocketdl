@@ -103,20 +103,25 @@ URL → FastAPI → Queue → yt-dlp → FFmpeg → Download
 - Android target path should be `/storage/emulated/0/Download/PocketDL` or a UI-configured equivalent.
 
 ## Current known issues
-### Duplicate captures
-Still occurs for some pages. Dynamic signed URLs and repeated player requests can create logically equivalent records. The current normalization is improved but not perfect.
+### Duplicate captures — improved
+Signed tokens embedded in the media URL's path (not just the query string,
+already handled) no longer create a new card per refresh; `normalize_media_url`
+strips opaque token-like path segments conservatively before hashing.
+Historical captures self-heal via the existing startup re-keying pass.
 
-Desired future behavior:
+Still open: grouping a master manifest with its own quality-variant
+sub-manifests into one card is a different problem (genuinely different
+paths) and remains unaddressed, as does multi-CDN/hostname rotation for the
+same content.
 
-```text
-same logical media
-+ refreshed signed URL
-→ one capture record
-→ latest usable URL replaces older URL
-```
-
-### Media size
-Not reliable for all HLS/DASH captures. Duration works better. Exact pre-download size may be impossible without downloading/enumerating segments. Design the UI to represent unknown/best-effort size honestly.
+### Media size — improved
+hls/dash captures no longer report the manifest text file's Content-Length as
+the media's size (was showing e.g. "500 B" for a real multi-hundred-MB
+stream); only a direct media capture's Content-Length is trusted. hls/dash
+size is now left unknown ("—") rather than wrong, pending either ffprobe
+enrichment succeeding or a future HLS segment-enumeration estimate — the
+latter is unimplemented; exact size before download may be impossible for
+some HLS/DASH sources without it.
 
 ### Short/wrong captures
 Players can issue tiny media requests that are not the actual video. These should be filtered or clearly marked, without deleting all short legitimate media.
@@ -145,9 +150,10 @@ This produced:
 Before continuing Android development, audit Git tracking and ensure all `.py`, `.ts`, `.tsx`, config, test, and documentation files are tracked.
 
 ## Immediate next action
-GitHub initialization/audit for v0.2.2 is done. M1–M5 are verified on-device
-(Termux runtime, backend, PWA, a real standard download landing under
-`/sdcard/Download/PocketDL`, and browser capture via Quetta). M6's code is
-implemented but the Termux:Boot-triggered reboot path is not yet verified
-on-device — do that next, then this Android baseline is complete. Do not
-proceed into v0.3 format-analysis work until then.
+The Android baseline is complete: M1–M6 are all verified on-device, including
+a real reboot triggering the Termux:Boot autostart hook. Now in Phase 2
+(stabilization after mobile): duplicate-capture and media-size fixes are
+underway (path-embedded signed tokens, hls/dash size misattribution — both
+fixed; master/variant grouping, multi-CDN dedup, and HLS segment-enumeration
+size estimates remain open). Short-media filtering is untouched. Do not
+proceed into v0.3 richer format/quality analysis until Phase 2 is stable.

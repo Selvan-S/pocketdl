@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from urllib.parse import urlparse, urlunparse
 import hashlib
+import re
 
 
 class CaptureType(StrEnum):
@@ -22,9 +23,43 @@ class MetadataStatus(StrEnum):
     FAILED = 'failed'
 
 
+_UUID_SEGMENT_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+_HEX_TOKEN_SEGMENT_RE = re.compile(r'^[0-9a-f]{20,}$', re.IGNORECASE)
+_OPAQUE_TOKEN_SEGMENT_RE = re.compile(r'^[A-Za-z0-9_-]{24,}$')
+
+
+def _looks_like_signed_token(segment: str) -> bool:
+    """Best-effort heuristic for a request-scoped signed token embedded in a
+    URL path segment, as opposed to a stable, meaningful slug or filename.
+
+    Deliberately conservative: pure-digit segments are never treated as
+    tokens (they are more often stable numeric content IDs than rotating
+    signed tokens), and the length/character-mix thresholds are high enough
+    that ordinary path segments (filenames, quality labels, short slugs)
+    should never match. The known failure mode this accepts in exchange is
+    two genuinely different videos on the same page whose manifest paths
+    differ only in an opaque, UUID-like *stable* identifier in the same
+    position — those would incorrectly collapse into one capture. Signed
+    tokens confined to the query string (the common case) were already
+    handled before this existed, since the query string is dropped entirely.
+    """
+    if not segment or segment.isdigit():
+        return False
+    if _UUID_SEGMENT_RE.match(segment):
+        return True
+    if _HEX_TOKEN_SEGMENT_RE.match(segment):
+        return True
+    if _OPAQUE_TOKEN_SEGMENT_RE.match(segment) and any(c.isdigit() for c in segment) and any(c.isalpha() for c in segment):
+        return True
+    return False
+
+
 def normalize_media_url(media_url: str) -> str:
     parsed = urlparse(media_url)
-    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, '', '', ''))
+    segments = parsed.path.split('/')
+    normalized_segments = ['{token}' if _looks_like_signed_token(segment) else segment for segment in segments]
+    normalized_path = '/'.join(normalized_segments)
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), normalized_path, '', '', ''))
 
 
 def normalize_page_url(page_url: str | None) -> str:
