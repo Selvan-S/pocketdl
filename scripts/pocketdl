@@ -1,3 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
+# PocketDL launcher. Installed as a symlink in $PREFIX/bin, so resolve the link
+# before locating the checkout.
 set -euo pipefail
-exec "$HOME/.pocketdl/app/scripts/start.sh"
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+exec "$(dirname "$SELF")/start.sh" "$@"

@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import type { CaptureDownloadRequest, CaptureItem } from '../types/api';
 
-interface Props {
-  items: CaptureItem[];
+interface CaptureActions {
   onDownload: (id: string, payload: CaptureDownloadRequest) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+}
+
+interface Props extends CaptureActions {
+  items: CaptureItem[];
 }
 
 function formatBytes(bytes: number | null): string {
@@ -48,7 +51,7 @@ export function CaptureList({ items, onDownload, onDelete }: Props) {
   );
 }
 
-function CaptureCard({ item, onDownload, onDelete }: Props & { item: CaptureItem }) {
+function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: CaptureItem }) {
   const [filename, setFilename] = useState(item.page_title ?? '');
   const [preset, setPreset] = useState<CaptureDownloadRequest['preset']>('best');
   const [busy, setBusy] = useState(false);
