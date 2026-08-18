@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Extension packaging for Android
+- Added `scripts/extension-package.sh`. Android Chromium browsers with
+  extension support (confirmed with Quetta) generally accept a packaged
+  `.zip`/`.crx`, not desktop Chrome's "Load unpacked" folder picker — and
+  Termux's home directory is a private app sandbox other apps can't browse
+  into via a folder picker regardless. The script rebuilds the extension,
+  zips exactly `manifest.json`, `popup.html`, and `dist/*.js` (excluding
+  source maps, `node_modules`, and other dev-only files), and — best-effort,
+  only when Termux storage access is granted — copies the result to
+  `~/storage/shared/pocketdl-capture.zip` so Quetta's file picker can reach
+  it. Verified: the zip's internal layout matches what `manifest.json`
+  references, its `manifest.json` is byte-identical to the source, and all
+  four packaged `.js` files parse as valid JavaScript.
+- Fixed a latent cross-platform bug in the script's python-interpreter
+  detection during that verification: `command -v` only checks that
+  something exists at a given name, and on Windows `python3` frequently
+  resolves to a non-functional App Execution Alias stub. Naive
+  `command -v python3 || command -v python` would have preferred the broken
+  stub over a working `python`. Fixed by actually invoking each candidate
+  (`--version`) rather than trusting existence alone.
+
 ### Suspicious/short capture detection
 - Moved short-media detection out of the React component and into the domain
   layer as `is_suspicious_capture`, exposed as `looks_suspicious` on

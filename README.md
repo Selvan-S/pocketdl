@@ -92,6 +92,11 @@ Enable **Developer mode** → **Load unpacked** → select:
 
 The extension observes media requests on pages where it has host access. Chrome documents that `webRequest` requires the API permission plus host permissions for the requested URL and initiator.
 
+For an Android Chromium browser (tested with Quetta), "Load unpacked" from a
+folder generally isn't offered and Termux's storage isn't browsable from
+other apps anyway — see [docs/termux.md](docs/termux.md#browser-extension-on-android)
+for `scripts/extension-package.sh`, which packages a `.zip` instead.
+
 ### Test workflow
 
 1. Start the FastAPI backend.

@@ -153,6 +153,30 @@ bash scripts/pocketdl-status.sh
 Service logs are at `~/.pocketdl/run/service.log`, rotated once they exceed
 2MB (one backup kept, `.log.1`).
 
+## Browser extension on Android
+
+Android Chromium browsers that support extensions generally do **not** offer
+desktop Chrome's "Load unpacked" folder picker (see README.md for that
+desktop flow). Instead they load a packaged file — a `.zip` or `.crx` —
+confirmed working this way with **Quetta**. Termux's home directory is also a
+private app sandbox other apps cannot browse into via a folder picker even if
+one were offered, so a packaged file is necessary either way.
+
+```bash
+bash scripts/extension-package.sh
+```
+
+This builds the extension fresh and writes
+`apps/browser-extension/pocketdl-capture.zip`. If Termux storage access is
+granted (`termux-setup-storage`, part of M1), it also copies the zip to
+`~/storage/shared/pocketdl-capture.zip` so it shows up as
+"Internal storage/pocketdl-capture.zip" in Quetta's file picker — the browser
+can't reach Termux's private storage directly.
+
+In Quetta: open the extensions page → install from file → pick that zip.
+After a rebuild, reload the extension from the same file rather than
+re-adding it, or per Quetta's own update flow if it differs.
+
 ## Configuration
 
 `~/.pocketdl/.env` lives outside the repository so `git pull` never clobbers it.
