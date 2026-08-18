@@ -13,6 +13,7 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_DIR="$REPO_DIR/services/api"
 VENV_DIR="$API_DIR/.venv"
+. "$REPO_DIR/scripts/lib/venv.sh"
 CHECK_M2=0
 [ "${1:-}" = "--all" ] && CHECK_M2=1
 
@@ -127,23 +128,8 @@ fi
 if [ "$CHECK_M2" -eq 1 ]; then
   section 'M2 — Backend readiness (reported, does not affect M1)'
 
-  # Same resolution order as start.sh: POCKETDL_VENV override, then the default
-  # layout, then a repo-root venv. bin/python on Termux, Scripts/python.exe when
-  # the same repo is checked out on the Windows development machine.
   [ -f "$HOME/.pocketdl/.env" ] && . "$HOME/.pocketdl/.env"
-  VENV_PYTHON=''
-  for candidate in \
-    "${POCKETDL_VENV:-}/bin/python" \
-    "${POCKETDL_VENV:-}/Scripts/python.exe" \
-    "$VENV_DIR/bin/python" \
-    "$VENV_DIR/Scripts/python.exe" \
-    "$REPO_DIR/.venv/bin/python" \
-    "$REPO_DIR/.venv/Scripts/python.exe" ; do
-    case "$candidate" in /bin/python|/Scripts/python.exe) continue ;; esac
-    [ -x "$candidate" ] && { VENV_PYTHON="$candidate"; break; }
-  done
-
-  if [ -n "$VENV_PYTHON" ]; then
+  if VENV_PYTHON="$(resolve_venv_python "$REPO_DIR")"; then
     pass "virtualenv present ($VENV_PYTHON)"
     for mod in fastapi uvicorn pydantic aiosqlite yt_dlp curl_cffi; do
       if out="$("$VENV_PYTHON" -c "import $mod, sys; print(getattr($mod, '__version__', 'present'))" 2>&1)"; then
@@ -163,6 +149,32 @@ if [ "$CHECK_M2" -eq 1 ]; then
   else
     fail 'apps/web/dist missing — backend will return 404 at / and serve no PWA'
     m2_failures=$((m2_failures + 1))
+  fi
+
+  section 'M6 — Background service setup (reported, does not affect M1)'
+  # This checks setup only: is autostart wired up. Whether the service is
+  # actually running right now is a live-state question — see
+  # scripts/pocketdl-status.sh, which this deliberately does not duplicate.
+
+  if command -v termux-wake-lock >/dev/null 2>&1; then
+    pass 'termux-wake-lock available'
+  else
+    warn 'termux-wake-lock not found (expected as part of base Termux; without it Android may suspend a backgrounded service)'
+  fi
+
+  BOOT_LINK="$HOME/.termux/boot/pocketdl-start"
+  if [ -L "$BOOT_LINK" ] || [ -f "$BOOT_LINK" ]; then
+    pass "boot hook installed ($BOOT_LINK)"
+  else
+    warn 'boot hook not installed — run scripts/termux-boot-install.sh for autostart after reboot'
+  fi
+
+  # Best-effort only: package visibility is restricted on some Android
+  # versions, so a miss here is a hint, not a reliable negative.
+  if command -v pm >/dev/null 2>&1 && pm list packages 2>/dev/null | grep -q 'com\.termux\.boot'; then
+    pass 'Termux:Boot app detected'
+  else
+    warn 'Termux:Boot app not detected (or undetectable on this Android version) — install from F-Droid for autostart'
   fi
 fi
 

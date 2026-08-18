@@ -22,59 +22,39 @@ Completed:
 
 ---
 
-# Phase 1 — Android/Termux deployment ← CURRENT
+# Phase 1 — Android/Termux deployment ← CURRENT (M1–M5 done, M6 pending on-device reboot verification)
 
-## M1 — Termux runtime
-Install and verify:
-- Termux.
-- Git.
-- Python.
-- Node.js/npm.
-- FFmpeg.
-- Android storage access.
+## M1 — Termux runtime — done
+Verified via `scripts/termux-doctor.sh` on-device: Termux, git, Python,
+Node.js/npm, FFmpeg/ffprobe, and Android storage access all passed.
 
-Acceptance:
-```text
-python --version
-node --version
-npm --version
-ffmpeg -version
-```
-all succeed.
+## M2 — Backend on Android — done
+`termux-doctor.sh --all` verified the venv, yt-dlp, curl_cffi and the rest of
+the dependency set; `/api/health` and `/api/system/status` confirmed live.
 
-## M2 — Backend on Android
-- Clone repository from GitHub.
-- Create `.venv`.
-- Install `requirements.txt`.
-- Verify yt-dlp and curl_cffi.
-- Start FastAPI.
-- Open Swagger from Android browser.
-- Verify `/api/health` and `/api/system/status`.
+## M3 — PWA on Android — done
+The backend serves the built PWA directly at `/` (no separate Vite dev
+server needed); frontend → backend communication verified.
 
-## M3 — PWA on Android
-- Start Vite dev server initially.
-- Open PocketDL in Android browser.
-- Verify frontend → backend communication.
+## M4 — Normal mobile download — done
+Verified on-device: a standard download completed successfully.
 
-## M4 — Normal mobile download
-- Test a permitted normal media source.
-- Verify yt-dlp works on Android.
-- Verify FFmpeg works on Android.
-- Verify output path under Android Downloads/PocketDL.
-- Change path from PocketDL UI and verify persisted value.
-
-## M5 — Browser capture on Android
-- Test supported Chromium browser with extension support.
-- Verify extension → localhost backend communication.
-- Capture HLS/DASH.
-- Download captured source.
-- Verify Android file output.
+## M5 — Browser capture on Android — done
+Verified on-device with the Quetta browser: extension loads, captures
+HLS/DASH, and the captured download completes.
 
 ## M6 — Background service
-- Add Termux:Boot.
-- Start PocketDL backend automatically after reboot.
-- Consider wake-lock/background process behavior.
-- Add a simple health/startup status indicator.
+- Add Termux:Boot. Code done: `scripts/termux-boot-install.sh` wires up the
+  `~/.termux/boot/` hook; installing the Termux:Boot app itself is a manual,
+  one-time step (F-Droid) that Android requires. **Not yet verified**: an
+  actual device reboot triggering autostart.
+- Start PocketDL backend automatically after reboot — pending the same
+  on-device verification.
+- Wake-lock/background process behavior: done. `scripts/pocketdl-service.sh`
+  holds `termux-wake-lock` and restarts the backend with backoff on crash or
+  exit; verified functionally (start, crash-and-recover, clean stop via
+  `scripts/pocketdl-stop.sh`).
+- Add a simple health/startup status indicator: done, `scripts/pocketdl-status.sh`.
 
 ---
 
