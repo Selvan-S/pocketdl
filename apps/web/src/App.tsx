@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api/client';
 import { DownloadForm } from './components/DownloadForm';
 import { DownloadList } from './components/DownloadList';
@@ -17,13 +17,21 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
 
+  // The 2s poll and user actions (delete, cancel, ...) both call refresh(),
+  // so calls can be in flight concurrently. Without this guard, a poll that
+  // started before a delete can resolve after it with stale data and
+  // resurrect the just-removed item until the next poll tick. Only the
+  // most-recently-started call is allowed to apply its result.
+  const refreshSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     const [items, system, captured, nextSettings] = await Promise.all([
       api.listDownloads(),
       api.status(),
       api.listCaptures(),
       api.settings(),
     ]);
+    if (seq !== refreshSeq.current) return;
     setDownloads(items);
     setStatus(system);
     setCaptures(captured);
@@ -150,8 +158,14 @@ export default function App() {
             await refresh();
           }}
           onDelete={async (id: string) => {
-            await api.deleteCapture(id);
-            await refresh();
+            setCaptures((current) => current.filter((item) => item.id !== id));
+            try {
+              await api.deleteCapture(id);
+            } catch (error: unknown) {
+              setMessage(error instanceof Error ? error.message : 'Unable to remove capture');
+            } finally {
+              await refresh();
+            }
           }}
         />
       </details>
@@ -173,7 +187,16 @@ export default function App() {
         <DownloadList
           items={downloads}
           onCancel={async (id) => { await api.cancelDownload(id); await refresh(); }}
-          onDelete={async (id) => { await api.deleteDownload(id); await refresh(); }}
+          onDelete={async (id) => {
+            setDownloads((current) => current.filter((item) => item.id !== id));
+            try {
+              await api.deleteDownload(id);
+            } catch (error: unknown) {
+              setMessage(error instanceof Error ? error.message : 'Unable to remove download');
+            } finally {
+              await refresh();
+            }
+          }}
         />
       </details>
 
