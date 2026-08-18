@@ -13,6 +13,11 @@
   tests errored instead of running. Backend suite now runs 17/17.
 - Pinned `apps/web` and extension dependencies off `latest` to the verified
   versions, so Windows and Termux resolve the same tree.
+  TypeScript was later repinned from `^7.0.2` to `^5.9.3`: TypeScript 7 is
+  a native binary with per-platform packages, and it does not publish an
+  `android-arm64` build, so `tsc` cannot run on Termux at all. Verified
+  vite's native deps (`rolldown`, `lightningcss`) do ship `android-arm64`
+  builds, so only TypeScript needed the downgrade.
 - Rewrote `scripts/termux-install.sh`: installs from `requirements.txt` into a
   virtualenv instead of a divergent hand-written list that dropped the
   `curl-cffi` extra; adds the build toolchain the Python dependencies need on
