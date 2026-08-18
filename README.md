@@ -113,10 +113,12 @@ The extension is intentionally a capture/observation tool, not a request-blockin
 
 ## Tests
 
-Backend tests:
+Backend tests. The test-only dependencies (pytest, pytest-asyncio, httpx2) live
+in `requirements-dev.txt`, which already includes `requirements.txt`:
 
 ```powershell
 cd services\api
+pip install -r requirements-dev.txt
 pytest -q
 ```
 
@@ -128,9 +130,28 @@ npm run typecheck
 npm run build
 ```
 
+## Android / Termux
+
+Android is the current active workstream. From a checkout on the device:
+
+```bash
+bash scripts/termux-install.sh          # install runtime + deps, build the web UI
+bash scripts/termux-doctor.sh --all     # verify the runtime (M1) and backend readiness (M2)
+pocketdl                                # start the backend
+```
+
+The installer runs in place against the checkout — it does not clone, copy or
+delete the repository. Update with `git pull` and re-run it. Configuration is
+written to `~/.pocketdl/.env`, outside the repository, and downloads default to
+`/sdcard/Download/PocketDL`.
+
+`termux-doctor.sh` exits non-zero when an M1 runtime check fails, so it can gate
+the later milestones. See [docs/termux.md](docs/termux.md).
+
 ## Versioning
 
 - v0.1.x: local downloader foundation, queue, filenames, diagnostics, analysis.
-- v0.2.x: browser capture + captured media download path + capture metadata/UX hardening.
+- v0.2.x: browser capture + captured media download path + capture metadata/UX
+  hardening, plus the Android/Termux deployment baseline (current).
 - v0.3.x: richer format selection, real-time progress, browser-session options and cross-browser work.
-- v0.4.x: Termux/Android deployment.
+- v0.4.x: Android/Termux productization — background service, share target, notifications.

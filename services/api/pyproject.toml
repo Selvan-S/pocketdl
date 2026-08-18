@@ -12,5 +12,14 @@ dependencies = [
   "yt-dlp[default,curl-cffi]>=2026.7.4,<2027.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<9.0",
+  "pytest-asyncio>=1.0,<2.0",
+  "httpx2>=2.0,<3.0",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
