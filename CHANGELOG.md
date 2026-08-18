@@ -2,6 +2,22 @@
 
 ## Unreleased — Android/Termux M1–M6
 
+- Fixed `pocketdl-service.sh` resolving its own location to `~/.termux`
+  instead of the repository when started via the Termux:Boot hook, which
+  crash-looped the backend forever after every real reboot (confirmed on
+  device: `code=127`, `.../.termux/scripts/start.sh: No such file or
+  directory`). The hook invokes the script through a symlink
+  (`~/.termux/boot/pocketdl-start -> pocketdl-service.sh`); `dirname` on
+  `${BASH_SOURCE[0]}` resolves against the symlink's own location, not its
+  target, so `REPO_DIR` landed one level up from the boot directory instead of
+  the real checkout. `scripts/pocketdl` already handled this correctly with
+  `readlink -f`; `pocketdl-service.sh` now does the same. The direct-invocation
+  path (`bash scripts/pocketdl-service.sh` from the repo) was unaffected and
+  is why this was not caught in prior testing — only the boot-hook symlink
+  path was broken. Regression-tested the direct path after the fix on the
+  Windows development machine, which lacks the privilege to create real
+  symlinks and so could not reproduce the symlink path itself; that path
+  still needs on-device re-verification after a reboot.
 - Added M6: a supervised background service (`scripts/pocketdl-service.sh`)
   and Termux:Boot autostart. The service holds a `termux-wake-lock` so Android
   does not suspend a backgrounded process, restarts the backend with
