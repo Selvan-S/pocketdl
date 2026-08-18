@@ -10,7 +10,14 @@ body { margin: 0; min-width: 320px; background: #080c18; }
 button, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
-.app-shell { width: min(940px, 100%); margin: 0 auto; padding: 24px 16px 40px; }
+/* index.html sets viewport-fit=cover so the page can draw edge-to-edge on
+   notched/gesture-nav Android devices; pad for the safe area it exposes so
+   content and tap targets stay clear of the status bar and gesture strip. */
+.app-shell {
+  width: min(940px, 100%);
+  margin: 0 auto;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 .eyebrow { font-size: 11px; letter-spacing: .12em; color: #8e9bb7; font-weight: 700; }
 h1 { margin: 6px 0 4px; font-size: clamp(30px, 8vw, 46px); }
@@ -50,7 +57,7 @@ button.secondary { background: transparent; border: 1px solid #2a3652; color: #d
 .progress { height: 100%; background: #dce6ff; border-radius: 99px; transition: width .3s ease; }
 .download-meta { display:flex; flex-wrap:wrap; gap: 12px; color: #8090ae; font-size: 11px; }
 .actions { display:flex; justify-content:flex-end; margin-top: 10px; }
-.actions button { min-height: 34px; padding: 0 10px; font-size: 12px; background: transparent; border: 1px solid #2a3652; color: #ccd6e9; }
+.actions button { min-height: 44px; padding: 0 14px; font-size: 12px; background: transparent; border: 1px solid #2a3652; color: #ccd6e9; }
 .error { margin-top: 10px; color: #ff9c9c; font-size: 12px; white-space: pre-wrap; }
 .error-details { margin-top: 10px; border: 1px solid #3a2630; border-radius: 10px; background: #0b101c; }
 .error-details summary { cursor: pointer; padding: 9px 10px; color: #ffc3c3; font-size: 12px; }
