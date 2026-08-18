@@ -17,7 +17,7 @@ from ..application.captures.service import CaptureService
 from ..core.path_settings import normalize_download_directory
 from ..core.platform import open_directory
 from ..core.settings_store import clear_download_directory, save_download_directory
-from ..domain.captures import CaptureType
+from ..domain.captures import CaptureType, is_suspicious_capture
 from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
 
 router = APIRouter(prefix='/api')
@@ -81,6 +81,7 @@ def capture_response(capture) -> CaptureResponse:
         height=capture.height,
         metadata_status=capture.metadata_status.value,
         metadata_error=capture.metadata_error,
+        looks_suspicious=is_suspicious_capture(capture),
         status=capture.status,
         created_at=capture.created_at,
         used_at=capture.used_at,

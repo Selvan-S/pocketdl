@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from urllib.parse import urlparse, urlunparse
 import hashlib
+import re
 
 
 class CaptureType(StrEnum):
@@ -22,9 +23,43 @@ class MetadataStatus(StrEnum):
     FAILED = 'failed'
 
 
+_UUID_SEGMENT_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+_HEX_TOKEN_SEGMENT_RE = re.compile(r'^[0-9a-f]{20,}$', re.IGNORECASE)
+_OPAQUE_TOKEN_SEGMENT_RE = re.compile(r'^[A-Za-z0-9_-]{24,}$')
+
+
+def _looks_like_signed_token(segment: str) -> bool:
+    """Best-effort heuristic for a request-scoped signed token embedded in a
+    URL path segment, as opposed to a stable, meaningful slug or filename.
+
+    Deliberately conservative: pure-digit segments are never treated as
+    tokens (they are more often stable numeric content IDs than rotating
+    signed tokens), and the length/character-mix thresholds are high enough
+    that ordinary path segments (filenames, quality labels, short slugs)
+    should never match. The known failure mode this accepts in exchange is
+    two genuinely different videos on the same page whose manifest paths
+    differ only in an opaque, UUID-like *stable* identifier in the same
+    position — those would incorrectly collapse into one capture. Signed
+    tokens confined to the query string (the common case) were already
+    handled before this existed, since the query string is dropped entirely.
+    """
+    if not segment or segment.isdigit():
+        return False
+    if _UUID_SEGMENT_RE.match(segment):
+        return True
+    if _HEX_TOKEN_SEGMENT_RE.match(segment):
+        return True
+    if _OPAQUE_TOKEN_SEGMENT_RE.match(segment) and any(c.isdigit() for c in segment) and any(c.isalpha() for c in segment):
+        return True
+    return False
+
+
 def normalize_media_url(media_url: str) -> str:
     parsed = urlparse(media_url)
-    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, '', '', ''))
+    segments = parsed.path.split('/')
+    normalized_segments = ['{token}' if _looks_like_signed_token(segment) else segment for segment in segments]
+    normalized_path = '/'.join(normalized_segments)
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), normalized_path, '', '', ''))
 
 
 def normalize_page_url(page_url: str | None) -> str:
@@ -61,3 +96,44 @@ class CapturedSource:
     status: CaptureStatus
     created_at: datetime
     used_at: datetime | None
+
+
+# Configurable heuristics for the "very short/wrong capture" backlog item --
+# deliberately a flag surfaced to the UI, never a hard delete, since a
+# legitimate-looking request can still be exactly what the user wants even if
+# it trips one of these signals.
+SHORT_DURATION_SECONDS = 10.0
+TINY_MEDIA_SIZE_BYTES = 50_000
+
+# Mirrors the browser extension's client-side heuristic
+# (apps/browser-extension/src/background.ts, isLikelyMediaSegment) as a
+# backend-side backstop: captures made before that filter existed, or from
+# any future non-extension client, still get flagged here.
+_SEGMENT_PATH_RE = re.compile(r'/(?:segments?|chunks?|fragments?|init|init-segment|parts?)\b', re.IGNORECASE)
+_SEGMENT_EXTENSION_RE = re.compile(r'\.(?:m4s|cmfv|cmfa|ts)(?:$|[?#])', re.IGNORECASE)
+_SEGMENT_QUERY_RE = re.compile(r'[?&](?:segment|chunk|fragment|part|range|seg|frag)=', re.IGNORECASE)
+
+
+def looks_like_media_segment(media_url: str) -> bool:
+    return bool(
+        _SEGMENT_PATH_RE.search(media_url)
+        or _SEGMENT_EXTENSION_RE.search(media_url)
+        or _SEGMENT_QUERY_RE.search(media_url)
+    )
+
+
+def is_suspicious_capture(capture: CapturedSource) -> bool:
+    """True if this capture is likely a fragment/segment rather than the
+    intended media, or otherwise implausibly short.
+
+    Applies to every capture_type, unlike the duration-only, media-only check
+    it replaces: an hls/dash capture whose *probed* duration turns out to be
+    a couple of seconds -- the exact scenario CLAUDE.md's backlog cites --
+    previously could never be flagged, since capture_type=media was the only
+    kind checked at all.
+    """
+    if capture.duration_seconds is not None and capture.duration_seconds < SHORT_DURATION_SECONDS:
+        return True
+    if capture.capture_type is CaptureType.MEDIA and capture.size_bytes is not None and capture.size_bytes < TINY_MEDIA_SIZE_BYTES:
+        return True
+    return looks_like_media_segment(capture.media_url)

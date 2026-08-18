@@ -1,6 +1,64 @@
 # Changelog
 
-## Unreleased — Android/Termux M1–M6
+## Unreleased
+
+### Suspicious/short capture detection
+- Moved short-media detection out of the React component and into the domain
+  layer as `is_suspicious_capture`, exposed as `looks_suspicious` on
+  `CaptureResponse` and rendered in both the PWA and the extension popup
+  (previously the extension popup showed no warning at all).
+- The old check was a hardcoded 10s duration threshold that only applied to
+  `capture_type=media`, so an hls/dash capture whose probed duration turned
+  out to be ~2s — the exact scenario CLAUDE.md's backlog describes — could
+  never be flagged. Duration now applies to every capture type.
+- Added two signals the roadmap asked for and the duration-only check missed:
+  tiny direct-media size (<50KB; direct media only, since hls/dash
+  `size_bytes` is deliberately unset), and segment/chunk-shaped URLs. The
+  latter mirrors the extension's own client-side `isLikelyMediaSegment`
+  filter as a backend-side backstop, so captures predating that filter, or
+  from any non-extension client, are still caught.
+- Still a flag, never a hard delete, per the roadmap's explicit requirement —
+  a legitimate short clip stays downloadable, just marked. Thresholds are
+  module-level constants, tunable in one place but not yet user-configurable
+  at runtime; that and MIME-based fragment detection remain open.
+- Added 8 domain tests covering each signal plus the cases that must NOT be
+  flagged (normal-length streams, plausible full media, and hls/dash size
+  which must never factor in). Full backend suite: 35/35.
+
+### Capture deduplication and size accuracy
+- Fixed duplicate capture cards for signed tokens embedded in the media URL's
+  *path* rather than its query string (e.g.
+  `/media/8f7a2b91c3d445fabb0e7a1c9d4e6f21/master.m3u8`, token rotating on
+  every request). Query-string tokens were already handled — the whole query
+  is dropped during normalization — but a path-embedded token changed the
+  dedup hash on every refresh, since the path was previously kept verbatim.
+  `normalize_media_url` now replaces path segments that look like opaque,
+  request-scoped tokens (UUIDs, long hex strings, long mixed alphanumeric
+  strings) with a placeholder before hashing. Deliberately conservative: pure
+  numeric segments and short/word-like segments are left untouched, so
+  distinct videos, quality variants (`master.m3u8` vs `720p.m3u8`), and
+  numeric content IDs remain distinguishable. Historical captures self-heal
+  on the next backend start via the existing startup re-keying pass — no
+  migration needed. Known remaining gap, not attempted here: grouping a
+  master manifest with its own quality-variant sub-manifests into one card is
+  a different problem (they have genuinely different paths, not just a
+  rotating token) and is left for later, as the roadmap already scopes it
+  separately.
+- Fixed hls/dash captures showing a tiny, wrong media size (e.g. "500 B" for
+  a real multi-hundred-MB stream). The browser reports `Content-Length` for
+  whatever it fetched — for hls/dash that is the manifest *text file*, not
+  the media — and it was being stored directly as `size_bytes`. Only a direct
+  `media` capture's `Content-Length` is now stored; hls/dash size is left
+  unknown (shown as "—") until ffprobe enrichment determines it, which is
+  honest given true HLS/DASH size generally requires enumerating every
+  segment — a further improvement explicitly left to a later pass, not
+  attempted here.
+- Added `services/api/tests/test_capture_domain.py` (7 tests) and 3 new tests
+  in `test_capture_service.py` covering both fixes plus the cases that must
+  NOT collapse (distinct variants, distinct slugs, distinct numeric IDs).
+  Full suite: 27/27 passing, no regressions.
+
+### Android/Termux M1–M6 baseline
 
 - Fixed `pocketdl-service.sh` resolving its own location to `~/.termux`
   instead of the repository when started via the Termux:Boot hook, which

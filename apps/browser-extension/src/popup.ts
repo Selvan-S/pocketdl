@@ -13,6 +13,7 @@ interface CaptureItem {
   width: number | null;
   height: number | null;
   metadata_status: 'pending' | 'ready' | 'failed';
+  looks_suspicious: boolean;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -65,6 +66,7 @@ function render(items: CaptureItem[]): void {
       <summary>
         <span class="capture-title">${escapeHtml(item.page_title || item.capture_type.toUpperCase())}</span>
         <span class="capture-meta">${escapeHtml(metadataText(item))}</span>
+        ${item.looks_suspicious ? '<span class="capture-warning">Possibly a fragment, not the full video</span>' : ''}
       </summary>
       <div class="capture-body">
         <span>${escapeHtml(item.page_url || 'Captured media')}</span>

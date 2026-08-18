@@ -99,6 +99,7 @@ export interface CaptureItem {
   height: number | null;
   metadata_status: 'pending' | 'ready' | 'failed';
   metadata_error: string | null;
+  looks_suspicious: boolean;
   status: 'captured' | 'used';
   created_at: string;
   used_at: string | null;

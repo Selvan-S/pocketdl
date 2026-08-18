@@ -22,7 +22,7 @@ Completed:
 
 ---
 
-# Phase 1 — Android/Termux deployment ← CURRENT (M1–M5 done, M6 pending on-device reboot verification)
+# Phase 1 — Android/Termux deployment — done (M1–M6 all verified on-device)
 
 ## M1 — Termux runtime — done
 Verified via `scripts/termux-doctor.sh` on-device: Termux, git, Python,
@@ -43,62 +43,88 @@ Verified on-device: a standard download completed successfully.
 Verified on-device with the Quetta browser: extension loads, captures
 HLS/DASH, and the captured download completes.
 
-## M6 — Background service
-- Add Termux:Boot. Code done: `scripts/termux-boot-install.sh` wires up the
-  `~/.termux/boot/` hook; installing the Termux:Boot app itself is a manual,
-  one-time step (F-Droid) that Android requires. **Not yet verified**: an
-  actual device reboot triggering autostart.
-- Start PocketDL backend automatically after reboot — pending the same
-  on-device verification.
-- Wake-lock/background process behavior: done. `scripts/pocketdl-service.sh`
-  holds `termux-wake-lock` and restarts the backend with backoff on crash or
-  exit; verified functionally (start, crash-and-recover, clean stop via
-  `scripts/pocketdl-stop.sh`).
-- Add a simple health/startup status indicator: done, `scripts/pocketdl-status.sh`.
+## M6 — Background service — done
+Verified on-device with a real reboot: `pocketdl-status.sh` showed the
+service, backend, and reachable API all up post-boot via the Termux:Boot
+hook. One bug surfaced and fixed along the way: the hook invokes
+`pocketdl-service.sh` through a symlink
+(`~/.termux/boot/pocketdl-start -> pocketdl-service.sh`), and the script's
+`dirname "${BASH_SOURCE[0]}"` resolved against the symlink's own location
+rather than its target, landing outside the repository and crash-looping the
+backend forever after every reboot. Fixed with `readlink -f`, the same
+pattern already used by the `pocketdl` launcher symlink. `pocketdl-service.sh`
+holds `termux-wake-lock` and restarts the backend with backoff on crash or
+exit; `pocketdl-status.sh` is the health/startup indicator;
+`pocketdl-stop.sh` stops it cleanly.
 
 ---
 
-# Phase 2 — Stabilization after mobile
+# Phase 2 — Stabilization after mobile ← CURRENT
 
-## Capture deduplication
-Improve identity model beyond URL normalization.
+## Capture deduplication — partially done
+Fixed: signed tokens embedded in the media URL's *path* (not just the query
+string, which was already handled) no longer create a new card on every
+refresh. `normalize_media_url` replaces path segments that look like opaque,
+request-scoped tokens (UUIDs, long hex, long mixed alphanumeric) with a
+placeholder before hashing, conservatively — numeric IDs and short/word-like
+segments are left alone so distinct videos and quality variants stay
+distinguishable. "When a signed URL changes: update existing capture with
+newest URL/context, do not create an additional card" — done for this case.
+Historical captures self-heal via the existing startup re-keying pass.
 
-Potential identity inputs:
-- page URL normalization.
-- host/path normalization.
-- manifest path.
-- media MIME type.
-- title/page title.
-- stream dimensions.
-- codec information.
-- a stable hash of normalized source identity.
-
-When a signed URL changes:
-- update existing capture with newest URL/context.
-- do not create an additional user-visible card.
+Still open, not attempted:
+- Grouping a master manifest with its own quality-variant sub-manifests
+  (`master.m3u8` vs `720p.m3u8`) into one card — these have genuinely
+  different paths, not a rotating token, so today's fix correctly leaves
+  them distinct. This needs a different mechanism (e.g. parsing the master
+  playlist's variant list) if it's wanted.
+- Multi-CDN / hostname rotation for the same content.
+- host/path normalization beyond token stripping, codec information, a
+  broader stable-identity hash.
 
 Test with players that refresh manifests frequently.
 
-## Media metadata
-Improve:
-- duration.
-- width/height.
-- codecs.
-- frame rate.
-- bitrate where available.
-- content length where available.
-- HLS segment enumeration for best-effort size estimates.
+## Media metadata — partially done
+Fixed: hls/dash captures no longer report the manifest text file's
+Content-Length as the media's size (was showing e.g. "500 B" for a real
+multi-hundred-MB stream). Only a direct media capture's Content-Length is
+trusted as a real size now; hls/dash size is left unknown until ffprobe
+enrichment determines it, which is honest rather than wrong.
 
-Never display an exact size when it is only an estimate. Label estimates.
+Still open, not attempted:
+- HLS segment enumeration for a best-effort size estimate when ffprobe can't
+  determine one.
+- codecs, frame rate, bitrate.
+- Never display an exact size when it is only an estimate — no
+  estimate-vs-exact UI distinction exists yet; today it's exact-or-unknown
+  ("—"), which side-steps the "never show a wrong exact number" requirement
+  without yet building the labeled-estimate UI this line originally asked for.
 
-## Short-media filtering
-Use configurable heuristics rather than hard deletes.
-Possible signals:
-- duration < threshold.
-- tiny content length.
-- URL looks like segment/chunk.
-- MIME/content-type is clearly a fragment.
-- manifest/direct-media relationship.
+## Short-media filtering — mostly done
+Implemented as a flag, never a hard delete, per this section's original
+requirement. `is_suspicious_capture` in the domain layer is now the single
+source of truth, surfaced as `looks_suspicious` on `CaptureResponse` and
+rendered in both the PWA and the extension popup.
+
+Signals implemented:
+- duration < threshold (`SHORT_DURATION_SECONDS`, 10s) — now applied to
+  **every** capture type. Previously this was a hardcoded client-side check in
+  React that only ran for `capture_type=media`, so an hls/dash capture that
+  probed out to ~2s (the exact case CLAUDE.md's backlog cites) could never be
+  flagged at all.
+- tiny content length (`TINY_MEDIA_SIZE_BYTES`, 50KB) — direct media only,
+  since hls/dash `size_bytes` is deliberately unset (it would be the
+  manifest's size, not the media's).
+- URL looks like segment/chunk — backend-side backstop mirroring the
+  extension's own `isLikelyMediaSegment` filter, so captures predating that
+  filter or from any non-extension client are still caught.
+
+Still open, not attempted:
+- MIME/content-type fragment detection as a distinct signal (the URL-shape
+  check already covers the common cases in practice).
+- manifest/direct-media relationship as a signal.
+- Making the thresholds user-configurable at runtime; they are currently
+  module-level constants, tunable in one place but not exposed in settings.
 
 ---
 
