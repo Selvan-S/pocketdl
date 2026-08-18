@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_DIR="$REPO_DIR/services/api"
+. "$REPO_DIR/scripts/lib/venv.sh"
 
 # Config lives outside the repository so `git pull` never clobbers it. Set
 # POCKETDL_VENV there to point at a virtualenv kept outside the default layout.
@@ -13,21 +14,7 @@ if [ -f "$HOME/.pocketdl/.env" ]; then
 fi
 set +a
 
-# bin/python on Termux; Scripts/python.exe when this repo is checked out on the
-# Windows development machine.
-VENV_PYTHON=''
-for candidate in \
-  "${POCKETDL_VENV:-}/bin/python" \
-  "${POCKETDL_VENV:-}/Scripts/python.exe" \
-  "$API_DIR/.venv/bin/python" \
-  "$API_DIR/.venv/Scripts/python.exe" \
-  "$REPO_DIR/.venv/bin/python" \
-  "$REPO_DIR/.venv/Scripts/python.exe" ; do
-  case "$candidate" in /bin/python|/Scripts/python.exe) continue ;; esac
-  [ -x "$candidate" ] && { VENV_PYTHON="$candidate"; break; }
-done
-
-if [ -z "$VENV_PYTHON" ]; then
+if ! VENV_PYTHON="$(resolve_venv_python "$REPO_DIR")"; then
   printf 'No virtualenv found. Looked in:\n' >&2
   [ -n "${POCKETDL_VENV:-}" ] && printf '  %s (POCKETDL_VENV)\n' "$POCKETDL_VENV" >&2
   printf '  %s\n  %s\n' "$API_DIR/.venv" "$REPO_DIR/.venv" >&2

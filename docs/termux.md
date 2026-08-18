@@ -99,6 +99,60 @@ Then open `http://127.0.0.1:8787/` in the Android browser; Swagger is at
 `/docs`, and `/api/system/status` reports the yt-dlp, FFmpeg and aria2 versions
 the backend can actually see.
 
+## Background service and autostart (M6)
+
+Running `pocketdl` directly keeps the backend attached to that terminal
+session — closing it stops the backend. For a persistent background service
+that survives a reboot, use the supervisor instead.
+
+**Enable autostart.** This needs the separate **Termux:Boot** app — Android
+does not let Termux itself receive the boot-completed event, so a dedicated
+app with that permission is required:
+
+1. Install **Termux:Boot** from **F-Droid** (not the Play Store build, which is
+   frequently stale): https://f-droid.org/packages/com.termux.boot/
+2. Open it once after installing so it registers.
+3. On some phones (MIUI, OxygenOS, One UI, ...) also allow autostart / disable
+   battery optimization for Termux and Termux:Boot in Android's app settings —
+   the OS otherwise blocks the boot receiver regardless of what the app does.
+4. Run:
+   ```bash
+   bash scripts/termux-boot-install.sh
+   ```
+   This symlinks `~/.termux/boot/pocketdl-start` to
+   `scripts/pocketdl-service.sh`, so `git pull` updates its behavior without
+   re-running the installer.
+
+**What the service does.** `scripts/pocketdl-service.sh` holds a
+`termux-wake-lock` so Android does not suspend a backgrounded process, and
+restarts the backend with exponential backoff (2s up to 60s) if it exits or
+crashes. It refuses to start a second instance if one is already running.
+
+**Check it.**
+```bash
+bash scripts/pocketdl-status.sh
+```
+Reports whether the service and backend are running, uptime, whether the
+backend API actually answers, and whether autostart is configured. This is a
+live-state check; `termux-doctor.sh --all`'s M6 section checks setup
+(wake-lock tool present, boot hook installed, Termux:Boot app detected —
+best-effort, since package visibility is restricted on some Android versions)
+rather than duplicating this.
+
+**Stop it.**
+```bash
+bash scripts/pocketdl-stop.sh
+```
+
+**Test without rebooting**, once the boot hook is installed:
+```bash
+bash ~/.termux/boot/pocketdl-start &
+bash scripts/pocketdl-status.sh
+```
+
+Service logs are at `~/.pocketdl/run/service.log`, rotated once they exceed
+2MB (one backup kept, `.log.1`).
+
 ## Configuration
 
 `~/.pocketdl/.env` lives outside the repository so `git pull` never clobbers it.

@@ -122,10 +122,16 @@ Not reliable for all HLS/DASH captures. Duration works better. Exact pre-downloa
 Players can issue tiny media requests that are not the actual video. These should be filtered or clearly marked, without deleting all short legitimate media.
 
 ### Mobile browser capture
-Not yet proven. Android browser extension capability needs a dedicated test using a Chromium browser that supports extensions.
+Verified working on-device using the Quetta browser (Chromium-based, supports
+loading the extension). M5 complete.
 
 ### Background service
-Termux:Boot has not been implemented yet.
+Implemented: `scripts/pocketdl-service.sh` (wake-lock, crash restart with
+backoff), `scripts/pocketdl-stop.sh`, `scripts/pocketdl-status.sh`, and
+`scripts/termux-boot-install.sh` to wire up the Termux:Boot hook. The
+supervisor's restart/backoff/signal-handling logic is verified functionally.
+Termux:Boot itself is a separate app (F-Droid) the user installs manually;
+the actual reboot-triggers-autostart path has not yet been verified on-device.
 
 ## Important repository incident
 A previous broad `.gitignore` pattern (`*`) caused a source file to be absent from the Android checkout:
@@ -139,4 +145,9 @@ This produced:
 Before continuing Android development, audit Git tracking and ensure all `.py`, `.ts`, `.tsx`, config, test, and documentation files are tracked.
 
 ## Immediate next action
-Finish GitHub initialization/audit for v0.2.2, then continue mobile milestones M1–M6. Do not proceed into v0.3 format-analysis work until the Android baseline has been exercised.
+GitHub initialization/audit for v0.2.2 is done. M1–M5 are verified on-device
+(Termux runtime, backend, PWA, a real standard download landing under
+`/sdcard/Download/PocketDL`, and browser capture via Quetta). M6's code is
+implemented but the Termux:Boot-triggered reboot path is not yet verified
+on-device — do that next, then this Android baseline is complete. Do not
+proceed into v0.3 format-analysis work until then.

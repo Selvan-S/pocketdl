@@ -1,7 +1,41 @@
 # Changelog
 
-## Unreleased — Android/Termux M1 baseline
+## Unreleased — Android/Termux M1–M6
 
+- Added M6: a supervised background service (`scripts/pocketdl-service.sh`)
+  and Termux:Boot autostart. The service holds a `termux-wake-lock` so Android
+  does not suspend a backgrounded process, restarts the backend with
+  exponential backoff (2s–60s) on crash or exit, and refuses to start a
+  second instance if one is already running. `scripts/pocketdl-stop.sh` stops
+  it cleanly (SIGTERM, wake-lock release, PID cleanup all verified). Enabling
+  autostart requires manually installing the separate Termux:Boot app from
+  F-Droid — Android does not let Termux itself receive the boot event — so
+  `scripts/termux-boot-install.sh` only wires up the boot hook
+  (`~/.termux/boot/pocketdl-start`, symlinked so `git pull` updates it in
+  place). Added `scripts/pocketdl-status.sh` as a live-state health/startup
+  indicator (service/backend running, uptime, backend API reachability,
+  autostart configured), and an M6 section in `termux-doctor.sh --all` for the
+  setup-time checks (wake-lock tool present, boot hook installed, Termux:Boot
+  app detected best-effort). The supervisor's restart/backoff/signal-forwarding
+  logic was verified functionally (start, crash-and-recover, clean stop); the
+  actual Termux:Boot-triggered reboot path still needs on-device verification.
+- Factored the venv-resolution logic duplicated across `start.sh` and
+  `termux-doctor.sh` into `scripts/lib/venv.sh`, now shared by those plus the
+  three new M6 scripts.
+- Fixed removing a download or capture requiring a manual page refresh to
+  disappear. The 2s poll and the delete action both called `refresh()` with no
+  sequencing; a poll-triggered call that started just before a delete could
+  resolve after it with stale data and silently overwrite the correct state.
+  `refresh()` now tags each call with a sequence number and only applies the
+  most-recently-*started* call's result. Delete/remove also update local state
+  immediately and reconcile afterward, restoring the item and showing an error
+  if the delete actually fails.
+- Mobile pass: raised `.actions button` (Cancel/Remove on download cards) from
+  a 34px to the ~44px touch target the rest of the UI already used, and made
+  `.app-shell` pad for `env(safe-area-inset-*)` so content and tap targets
+  stay clear of the status bar / gesture-nav strip on notched Android devices
+  — `viewport-fit=cover` was declared but nothing had consumed the insets it
+  exposes.
 - Fixed the web build, which failed with 342 TypeScript errors from a clean
   install because `@types/react` and `@types/react-dom` were never declared.
   Without `apps/web/dist` the backend served no PWA and returned 404 at `/`.

@@ -117,7 +117,14 @@ npm run web:build
 printf '==> Installing the launcher\n'
 mkdir -p "$PREFIX/bin"
 ln -sf "$REPO_DIR/scripts/pocketdl" "$PREFIX/bin/pocketdl"
-chmod +x "$REPO_DIR/scripts/pocketdl" "$REPO_DIR/scripts/start.sh" "$REPO_DIR/scripts/termux-doctor.sh"
+chmod +x \
+  "$REPO_DIR/scripts/pocketdl" \
+  "$REPO_DIR/scripts/start.sh" \
+  "$REPO_DIR/scripts/termux-doctor.sh" \
+  "$REPO_DIR/scripts/pocketdl-service.sh" \
+  "$REPO_DIR/scripts/pocketdl-stop.sh" \
+  "$REPO_DIR/scripts/pocketdl-status.sh" \
+  "$REPO_DIR/scripts/termux-boot-install.sh"
 
 printf '\nPocketDL installed.\n'
 printf '  Config:    %s\n' "$ENV_FILE"
@@ -125,3 +132,6 @@ printf '  Downloads: %s\n' "$DOWNLOAD_DIR"
 printf '  Start:     pocketdl\n'
 printf '  Verify:    bash %s/scripts/termux-doctor.sh --all\n' "$REPO_DIR"
 printf '  Then open: http://127.0.0.1:%s/  (Swagger at /docs)\n\n' "$PORT"
+printf 'Optional: start automatically after reboot (needs the separate\n'
+printf 'Termux:Boot app from F-Droid):\n'
+printf '  bash %s/scripts/termux-boot-install.sh\n\n' "$REPO_DIR"
