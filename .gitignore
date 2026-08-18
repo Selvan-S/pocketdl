@@ -68,3 +68,6 @@ desktop.ini
 /downloads/
 # TypeScript incremental build metadata
 *.tsbuildinfo
+
+# Packaged extension build output (scripts/extension-package.sh)
+apps/browser-extension/*.zip
