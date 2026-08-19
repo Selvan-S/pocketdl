@@ -138,6 +138,7 @@ async def create_download(payload: DownloadCreateRequest, request: Request) -> D
             payload.retries,
             payload.use_aria2,
             context,
+            format_id=payload.format_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

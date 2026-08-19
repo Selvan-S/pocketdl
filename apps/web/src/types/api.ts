@@ -32,7 +32,9 @@ export interface DownloadItem {
 export interface DownloadCreateRequest {
   url: string;
   filename?: string;
-  preset?: 'best' | '1080p' | '720p' | 'audio';
+  preset?: 'best' | '1080p' | '720p' | '480p' | 'audio';
+  /** A specific format_id from AnalyzeResponse['formats']; overrides preset when set. */
+  format_id?: string;
   concurrent_fragments?: number;
   retries?: number;
   use_aria2?: boolean;

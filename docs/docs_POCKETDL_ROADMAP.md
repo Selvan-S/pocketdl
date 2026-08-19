@@ -146,25 +146,26 @@ Media type
 Formats
 ```
 
-## Format model
-Expose:
-- resolution.
-- codec.
-- container.
-- audio codec.
-- bitrate.
-- frame rate.
-- estimated size.
-- protocol (HLS, DASH, HTTP, etc.).
+## Format model — done
+`/api/analyze` already returned resolution, codec, container, audio codec,
+bitrate, frame rate, estimated size and protocol per format
+(`services/api/app/domain/analyzer.py`); `fps` and bitrate were captured but
+never rendered in the UI. Now shown in the format chip.
 
-## User selection
-Allow:
-- Best.
-- 1080p.
-- 720p.
-- 480p.
-- audio-only.
-- custom format/codec where appropriate.
+## User selection — done
+Best/1080p/720p/audio-only presets already existed; added 480p. The bigger
+gap was that `/api/analyze`'s per-format list was display-only — its own code
+comment said "Format selection will be added in a later release", and
+`AnalyzeResult.tsx` (the component built for this) was never imported
+anywhere. Wired it into `DownloadForm.tsx`: clicking a video format chip
+selects that exact `format_id` for download, overriding the coarse preset
+(`-f "<format_id>+bestaudio/best"`). Audio-only formats stay behind the
+existing "Audio only" preset rather than being individually selectable, to
+avoid double-merging audio. Backend: `format_id` threaded through
+`QueueService` → `Downloader` protocol → `YtDlpService`, validated at the API
+boundary (schema field_validator) and defensively re-checked in
+`application/downloads/strategy.py:format_args` (now a pure, unit-tested
+function; previously a private, untested `YtDlpService` method).
 
 ## Filename policy
 Priority:

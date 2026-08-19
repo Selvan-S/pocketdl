@@ -14,7 +14,7 @@ class QueueService:
         self.semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.contexts: dict[str, RequestContext] = {}
-        self.options: dict[str, tuple[str, int, int, bool, DownloadSourceType, str | None]] = {}
+        self.options: dict[str, tuple[str, str | None, int, int, bool, DownloadSourceType, str | None]] = {}
 
     async def create(
         self,
@@ -28,6 +28,7 @@ class QueueService:
         source_type: DownloadSourceType = DownloadSourceType.STANDARD,
         capture_id: str | None = None,
         title: str | None = None,
+        format_id: str | None = None,
     ) -> DownloadJob:
         normalized_filename = sanitize_filename(filename) if filename else None
         if not normalized_filename and title:
@@ -60,7 +61,7 @@ class QueueService:
         )
         await self.repository.add(job)
         self.contexts[job.id] = request_context
-        self.options[job.id] = (preset, concurrent_fragments, retries, use_aria2, source_type, capture_id)
+        self.options[job.id] = (preset, format_id, concurrent_fragments, retries, use_aria2, source_type, capture_id)
         self.tasks[job.id] = asyncio.create_task(self._run(job.id))
         return job
 
@@ -70,11 +71,12 @@ class QueueService:
                 latest = await self.repository.get(job_id)
                 if latest is None:
                     return
-                preset, concurrent_fragments, retries, use_aria2, source_type, capture_id = self.options[job_id]
+                preset, format_id, concurrent_fragments, retries, use_aria2, source_type, capture_id = self.options[job_id]
                 request_context = self.contexts[job_id]
                 await self.downloader.download(
                     latest,
                     preset=preset,
+                    format_id=format_id,
                     concurrent_fragments=concurrent_fragments,
                     retries=retries,
                     use_aria2=use_aria2,
