@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 from urllib.parse import urlparse
@@ -40,11 +41,22 @@ class RequestContextRequest(BaseModel):
 class DownloadCreateRequest(BaseModel):
     url: str
     filename: str | None = Field(default=None, min_length=1, max_length=200)
-    preset: Literal['best', '1080p', '720p', 'audio'] = 'best'
+    preset: Literal['best', '1080p', '720p', '480p', 'audio'] = 'best'
+    # A specific format_id from /api/analyze's format list, e.g. "137". Takes
+    # priority over preset when set -- see YtDlpService._format_args. Only
+    # meaningful for standard (non-captured) sources; ignored otherwise.
+    format_id: str | None = Field(default=None, min_length=1, max_length=100)
     concurrent_fragments: int = Field(default=8, ge=1, le=32)
     retries: int = Field(default=10, ge=1, le=100)
     use_aria2: bool = False
     request_context: RequestContextRequest = Field(default_factory=RequestContextRequest)
+
+    @field_validator('format_id')
+    @classmethod
+    def validate_format_id(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r'[A-Za-z0-9_.+-]{1,100}', value):
+            raise ValueError('format_id must be a plain yt-dlp format identifier.')
+        return value
 
     @field_validator('url')
     @classmethod

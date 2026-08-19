@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import type { AnalyzeResponse, DownloadCreateRequest } from '../types/api';
+import { AnalyzeResult } from './AnalyzeResult';
 
 interface Props {
   onSubmit: (payload: DownloadCreateRequest) => Promise<void>;
@@ -19,6 +20,7 @@ export function DownloadForm({ onSubmit, onAnalyze }: Props) {
   const [userAgent, setUserAgent] = useState('');
   const [impersonation, setImpersonation] = useState<NonNullable<DownloadCreateRequest['request_context']>['impersonation']>('auto');
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
+  const [formatId, setFormatId] = useState<string | null>(null);
 
   function requestContext() {
     const context: DownloadCreateRequest['request_context'] = { impersonation };
@@ -35,6 +37,7 @@ export function DownloadForm({ onSubmit, onAnalyze }: Props) {
     try {
       const result = await onAnalyze({ url: url.trim(), request_context: requestContext() });
       setAnalysis(result);
+      setFormatId(null);
       if (!filename.trim() && result.title) setFilename(result.title);
     } finally {
       setAnalyzing(false);
@@ -55,10 +58,12 @@ export function DownloadForm({ onSubmit, onAnalyze }: Props) {
         request_context: requestContext(),
       };
       if (filename.trim()) payload.filename = filename.trim();
+      if (formatId) payload.format_id = formatId;
       await onSubmit(payload);
       setUrl('');
       setFilename('');
       setAnalysis(null);
+      setFormatId(null);
     } finally {
       setBusy(false);
     }
@@ -98,10 +103,11 @@ export function DownloadForm({ onSubmit, onAnalyze }: Props) {
       <div className="field-help">The extension is selected automatically from the downloaded format.</div>
 
       <div className="row">
-        <select value={preset} onChange={(event) => setPreset(event.target.value as DownloadCreateRequest['preset'])}>
+        <select value={preset} disabled={!!formatId} onChange={(event) => setPreset(event.target.value as DownloadCreateRequest['preset'])}>
           <option value="best">Best quality</option>
           <option value="1080p">Up to 1080p</option>
           <option value="720p">Up to 720p</option>
+          <option value="480p">Up to 480p</option>
           <option value="audio">Audio only</option>
         </select>
       </div>
@@ -131,10 +137,7 @@ export function DownloadForm({ onSubmit, onAnalyze }: Props) {
       )}
 
       {analysis && (
-        <div className="analysis-result-inline">
-          <div className="analysis-title">{analysis.title || 'Analysis completed'}</div>
-          <div className="field-help">{analysis.formats.length} formats detected{analysis.extractor ? ` · ${analysis.extractor}` : ''}</div>
-        </div>
+        <AnalyzeResult result={analysis} selectedFormatId={formatId} onSelectFormat={setFormatId} />
       )}
     </form>
   );

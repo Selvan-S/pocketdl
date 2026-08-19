@@ -76,16 +76,20 @@ footer { display:flex; justify-content:space-between; gap:10px; margin-top: 28px
 .advanced-toggle { width: 100%; background: transparent; border: 1px dashed #2a3652; color: #9eabc4; min-height: 38px; font-size: 12px; }
 .advanced-panel { display: grid; gap: 8px; padding: 12px; border: 1px solid #202b44; background: #0c1323; border-radius: 12px; }
 .advanced-panel input { min-height: 40px; }
-.analysis-result-inline { padding: 10px 12px; border: 1px solid #24314d; border-radius: 11px; background: #0c1426; }
-.analysis-title { font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
 .analysis-result { margin-top: 12px; padding: 14px; border: 1px solid #25314d; border-radius: 14px; background: #0c1425; }
 .analysis-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .analysis-header h3 { margin: 4px 0 0; font-size: 16px; overflow-wrap: anywhere; }
 .analysis-meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 9px; color: #8090ae; font-size: 11px; }
 .formats-grid { display: grid; gap: 8px; margin-top: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.format-chip { padding: 9px; border: 1px solid #222e49; border-radius: 10px; background: #0f1728; min-width: 0; }
+/* .format-chip is a <button> so it can be selected; override the global
+   button reset (light background, centered bold text, 44px min-height) back
+   to the original card look. */
+.format-chip { min-height: 0; width: 100%; padding: 9px; border: 1px solid #222e49; border-radius: 10px; background: #0f1728; color: inherit; font-weight: 400; text-align: left; min-width: 0; }
+.format-chip:disabled { cursor: default; opacity: .5; }
+.format-chip-selected { border-color: #6f86bf; background: #131d33; box-shadow: 0 0 0 1px #6f86bf inset; }
 .format-chip strong { display: block; color: #d7dfef; font-size: 11px; overflow-wrap: anywhere; }
 .format-chip span { display: block; margin-top: 3px; color: #75839d; font-size: 10px; overflow-wrap: anywhere; }
+.link-button { display: inline; min-height: 0; background: none; border: 0; padding: 0; color: #9db4e6; font-weight: 600; font-size: inherit; text-decoration: underline; cursor: pointer; }
 .live-badge { padding: 4px 7px; border-radius: 999px; background: #351b25; color: #ffb1b1; font-size: 10px; font-weight: 800; }
 @media (max-width: 680px) { .action-row { grid-template-columns: 1fr; } .formats-grid { grid-template-columns: 1fr; } }
 

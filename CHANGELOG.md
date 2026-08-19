@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Format selection (Phase 3)
+- `AnalyzeResult.tsx` was built but never imported anywhere; `DownloadForm.tsx`
+  rendered a separate minimal inline summary instead, so the format list
+  `/api/analyze` already returned was effectively dead — its own code comment
+  said "Format selection will be added in a later release." Wired it in:
+  clicking a video format chip now selects that exact `format_id`, which
+  overrides the coarse quality preset for that download
+  (`-f "<format_id>+bestaudio/best"`). Audio-only formats are shown but not
+  individually selectable — they'd double up with the `+bestaudio` merge —
+  and continue to go through the existing "Audio only" preset.
+- Added a `480p` preset, completing the roadmap's listed preset set
+  (Best/1080p/720p/480p/audio-only).
+- Format chips now also show fps and bitrate; both were already threaded
+  through the full domain → schema → route → frontend pipeline but never
+  rendered.
+- `format_id` is validated at the API boundary (a pydantic field_validator
+  rejecting anything outside `[A-Za-z0-9_.+-]`) and, defensively, again where
+  it's consumed — a malformed value degrades to the preset instead of
+  reaching yt-dlp's `-f` argument unshaped.
+- Moved format-argument construction out of a private, untested
+  `YtDlpService` method into `application/downloads/strategy.py:format_args`,
+  a pure function alongside the module's existing retry-strategy logic.
+  Added 8 regression tests covering every preset, format_id overriding a
+  preset, a composite `format_id` (e.g. `"137+140"`), and the malformed-input
+  fallback.
+- Verified end-to-end against a live backend instance: a malformed
+  `format_id` is rejected with 422 before reaching yt-dlp; a valid one is
+  accepted (201) and actually reaches yt-dlp as a real subprocess — confirmed
+  by yt-dlp's own output showing it parsed the `-f 137+bestaudio/best`
+  argument successfully and only failed at the (expected, URL was fake)
+  network fetch step, not at argument parsing.
+
 ### Extension packaging for Android
 - Added `scripts/extension-package.sh`. Android Chromium browsers with
   extension support (confirmed with Quetta) generally accept a packaged

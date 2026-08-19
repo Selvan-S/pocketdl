@@ -22,6 +22,7 @@ class Downloader(Protocol):
         job: DownloadJob,
         *,
         preset: str,
+        format_id: str | None,
         concurrent_fragments: int,
         retries: int,
         use_aria2: bool,

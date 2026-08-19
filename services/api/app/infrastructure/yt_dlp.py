@@ -10,6 +10,7 @@ from ..application.downloads.errors import classify_download_error
 from ..application.downloads.strategy import (
     DownloadAttempt,
     ffmpeg_hls_attempt,
+    format_args,
     impersonated_attempt,
     initial_attempt,
     should_retry_with_ffmpeg,
@@ -117,15 +118,6 @@ class YtDlpService:
 
         raise RuntimeError(last_output or 'yt-dlp analysis failed.')
 
-    def _format_args(self, preset: str) -> list[str]:
-        if preset == 'audio':
-            return ['-f', 'ba/b', '-x', '--audio-format', 'mp3']
-        if preset == '1080p':
-            return ['-f', 'bv*[height<=1080]+ba/b', '--merge-output-format', 'mp4']
-        if preset == '720p':
-            return ['-f', 'bv*[height<=720]+ba/b', '--merge-output-format', 'mp4']
-        return ['-f', 'bv*+ba/b', '--merge-output-format', 'mp4']
-
     def _output_template(self, job: DownloadJob) -> str:
         directory = self.settings.download_directory
         if job.filename:
@@ -145,6 +137,7 @@ class YtDlpService:
         job: DownloadJob,
         *,
         preset: str,
+        format_id: str | None,
         concurrent_fragments: int,
         retries: int,
         use_aria2: bool,
@@ -164,7 +157,7 @@ class YtDlpService:
             str(max(1, min(concurrent_fragments, 32))),
             '--output',
             self._output_template(job),
-            *self._format_args(preset),
+            *format_args(preset, format_id),
         ]
         args += self._context_args(request_context, impersonate=attempt.impersonate)
         if attempt.use_ffmpeg_hls:
@@ -198,6 +191,7 @@ class YtDlpService:
         job: DownloadJob,
         *,
         preset: str,
+        format_id: str | None = None,
         concurrent_fragments: int,
         retries: int,
         use_aria2: bool,
@@ -231,6 +225,7 @@ class YtDlpService:
             args = self._build_args(
                 job,
                 preset=preset,
+                format_id=format_id,
                 concurrent_fragments=concurrent_fragments,
                 retries=retries,
                 use_aria2=use_aria2,

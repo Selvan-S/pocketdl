@@ -137,7 +137,10 @@ npm run build
 
 ## Android / Termux
 
-Android is the current active workstream. From a checkout on the device:
+Setting up on a phone for the first time? See
+[docs/MOBILE_SETUP_GUIDE.md](docs/MOBILE_SETUP_GUIDE.md) — a from-scratch
+walkthrough with the reasoning behind each step. The quick version, from a
+checkout on the device:
 
 ```bash
 bash scripts/termux-install.sh          # install runtime + deps, build the web UI
@@ -151,7 +154,9 @@ written to `~/.pocketdl/.env`, outside the repository, and downloads default to
 `/sdcard/Download/PocketDL`.
 
 `termux-doctor.sh` exits non-zero when an M1 runtime check fails, so it can gate
-the later milestones. See [docs/termux.md](docs/termux.md).
+the later milestones. See [docs/termux.md](docs/termux.md) for the compact
+reference, including the background-service (M6) and browser-extension (M5)
+setup this guide's quick version above skips.
 
 ## Versioning
 

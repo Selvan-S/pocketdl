@@ -22,13 +22,24 @@ function formatBytes(value: number | null): string {
 }
 
 function describeFormat(item: AnalyzeResponse['formats'][number]): string {
-  const resolution = item.height ? `${item.height}p` : item.width ? `${item.width}px` : 'audio';
+  const fps = item.height && item.fps ? Math.round(item.fps) : null;
+  const resolution = item.height ? `${item.height}p${fps ?? ''}` : item.width ? `${item.width}px` : 'audio';
   const codecs = [item.vcodec, item.acodec].filter(Boolean).join(' + ') || 'unknown codec';
   const ext = item.ext ? `.${item.ext}` : '';
   return `${resolution} · ${ext || 'format'} · ${codecs}`;
 }
 
-export function AnalyzeResult({ result }: { result: AnalyzeResponse }) {
+function describeRate(item: AnalyzeResponse['formats'][number]): string | null {
+  return item.tbr ? `${Math.round(item.tbr)} kbps` : null;
+}
+
+interface Props {
+  result: AnalyzeResponse;
+  selectedFormatId: string | null;
+  onSelectFormat: (formatId: string | null) => void;
+}
+
+export function AnalyzeResult({ result, selectedFormatId, onSelectFormat }: Props) {
   return (
     <section className="analysis-result" aria-live="polite">
       <div className="analysis-header">
@@ -47,15 +58,36 @@ export function AnalyzeResult({ result }: { result: AnalyzeResponse }) {
       </div>
 
       <div className="formats-grid">
-        {result.formats.slice(0, 12).map((item) => (
-          <div className="format-chip" key={`${item.format_id}-${item.ext}-${item.height ?? 'audio'}`}>
-            <strong>{describeFormat(item)}</strong>
-            <span>{formatBytes(item.filesize)}{item.protocol ? ` · ${item.protocol}` : ''}</span>
-          </div>
-        ))}
+        {result.formats.slice(0, 12).map((item) => {
+          // Audio-only formats aren't individually selectable here: picking one
+          // would need to skip the "+bestaudio" merge the backend always adds
+          // for a selected format_id. Use the "Audio only" preset instead.
+          const selectable = item.height != null;
+          const selected = selectable && item.format_id === selectedFormatId;
+          return (
+            <button
+              key={`${item.format_id}-${item.ext}-${item.height ?? 'audio'}`}
+              type="button"
+              className={`format-chip${selected ? ' format-chip-selected' : ''}`}
+              disabled={!selectable}
+              aria-pressed={selected}
+              onClick={() => onSelectFormat(selected ? null : item.format_id)}
+            >
+              <strong>{describeFormat(item)}</strong>
+              <span>{formatBytes(item.filesize)}{describeRate(item) ? ` · ${describeRate(item)}` : ''}{item.protocol ? ` · ${item.protocol}` : ''}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {result.formats.length > 12 && <div className="field-help">Showing the first 12 formats. Format selection will be added in a later release.</div>}
+      {selectedFormatId && (
+        <div className="field-help">
+          Downloading exactly this format instead of the quality preset below.{' '}
+          <button type="button" className="link-button" onClick={() => onSelectFormat(null)}>Use quality preset instead</button>
+        </div>
+      )}
+
+      {result.formats.length > 12 && <div className="field-help">Showing the first 12 formats.</div>}
     </section>
   );
 }
