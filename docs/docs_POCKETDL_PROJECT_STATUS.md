@@ -140,13 +140,16 @@ place, but not yet user-configurable at runtime.
 Verified working on-device using the Quetta browser (Chromium-based, supports
 loading the extension). M5 complete.
 
-### Background service
+### Background service — done
 Implemented: `scripts/pocketdl-service.sh` (wake-lock, crash restart with
 backoff), `scripts/pocketdl-stop.sh`, `scripts/pocketdl-status.sh`, and
-`scripts/termux-boot-install.sh` to wire up the Termux:Boot hook. The
-supervisor's restart/backoff/signal-handling logic is verified functionally.
-Termux:Boot itself is a separate app (F-Droid) the user installs manually;
-the actual reboot-triggers-autostart path has not yet been verified on-device.
+`scripts/termux-boot-install.sh` to wire up the Termux:Boot hook. Verified
+on-device with a real reboot — `pocketdl-status.sh` showed the service,
+backend, and reachable API all up post-boot. One bug was found and fixed
+along the way: the boot hook invokes `pocketdl-service.sh` through a symlink,
+and `dirname "${BASH_SOURCE[0]}"` resolved against the symlink's own location
+rather than its target, crash-looping the backend forever after every
+reboot. Fixed with `readlink -f` (same pattern as the `pocketdl` launcher).
 
 ## Important repository incident
 A previous broad `.gitignore` pattern (`*`) caused a source file to be absent from the Android checkout:
@@ -161,9 +164,36 @@ Before continuing Android development, audit Git tracking and ensure all `.py`, 
 
 ## Immediate next action
 The Android baseline is complete: M1–M6 are all verified on-device, including
-a real reboot triggering the Termux:Boot autostart hook. Now in Phase 2
-(stabilization after mobile): duplicate-capture and media-size fixes are
-underway (path-embedded signed tokens, hls/dash size misattribution — both
-fixed; master/variant grouping, multi-CDN dedup, and HLS segment-enumeration
-size estimates remain open). Short-media filtering is untouched. Do not
-proceed into v0.3 richer format/quality analysis until Phase 2 is stable.
+a real reboot triggering the Termux:Boot autostart hook, extension sideloading
+on the Quetta browser, and a normal mobile download. Phase 2 (post-mobile
+stabilization) is done to the point CLAUDE.md required before moving on:
+path-embedded signed-token dedup, hls/dash size misattribution, and
+suspicious/short-capture flagging (across all capture types, not just
+`media`) are all fixed and merged (PR #9, `db92af2`). What's left in Phase 2
+is explicitly lower-priority, not-yet-attempted breadth (master/variant
+manifest grouping, multi-CDN dedup, HLS segment-enumeration size estimates,
+user-configurable thresholds) — see `docs_POCKETDL_ROADMAP.md` Phase 2 for
+the itemized list.
+
+Phase 3 format/quality selection is also done: `/api/analyze`'s per-format
+list (resolution, codec, fps, bitrate) is now wired into the UI — clicking a
+format chip downloads that exact `format_id` instead of only a coarse
+preset — and a 480p preset was added. This was a real gap: the component
+built for it (`AnalyzeResult.tsx`) existed but was never imported anywhere,
+and its own code comment still said "Format selection will be added in a
+later release."
+
+A from-scratch mobile setup guide (`docs/MOBILE_SETUP_GUIDE.md`) has also
+been written and linked from README.md and `docs/termux.md`.
+
+This work is on branch `feature/format-quality-analysis` (commits `47b470a`,
+`a82912a`), pushed to origin, not yet merged — per the established workflow
+the user opens the PR and merges via GitHub themselves, then this branch
+should be deleted locally and remotely and `main` re-synced.
+
+Nothing is currently blocking. The next reasonable increment is either: pick
+up one of the remaining Phase 2 items above, or move into Phase 4 (extension
+UX: capture quality ranking, popup download action, freshness/age) — CLAUDE.md's
+"do not start v0.3 [format] work until mobile baseline is working" gate has
+been satisfied, so there is no standing reason to avoid feature breadth
+beyond normal judgment about what's highest-value next.
