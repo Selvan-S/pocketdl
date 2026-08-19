@@ -4,6 +4,10 @@ PocketDL follows the official yt-dlp Android path: Termux + Python + yt-dlp, wit
 FFmpeg for post-processing and captured HLS/DASH downloads. yt-dlp also supports
 concurrent HLS/DASH fragments and optional aria2 as an external downloader.
 
+New to this setup? [MOBILE_SETUP_GUIDE.md](MOBILE_SETUP_GUIDE.md) walks through
+the same ground from scratch, with the reasoning behind each step. This page
+is the compact reference.
+
 ## Install
 
 Clone the repository on the device, then run the installer from the checkout:
