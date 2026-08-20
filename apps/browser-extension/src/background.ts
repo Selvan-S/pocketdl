@@ -1,5 +1,5 @@
 import { EXTENSION_PROTOCOL_HEADER, getBackendUrl } from './config.js';
-import type { CaptureType, PendingRequest } from './models.js';
+import type { CaptureAttemptStatus, CaptureType, PendingRequest } from './models.js';
 
 const pending = new Map<string, PendingRequest>();
 const recentCaptureKeys = new Map<string, number>();
@@ -140,7 +140,7 @@ async function sendCapture(requestId: string, statusCode: number): Promise<void>
   const userAgent = headerValue(Object.entries(headers).map(([name, value]) => ({ name, value })), 'user-agent');
 
   try {
-    await fetch(`${backendUrl}/api/captures`, {
+    const response = await fetch(`${backendUrl}/api/captures`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -159,9 +159,21 @@ async function sendCapture(requestId: string, statusCode: number): Promise<void>
         content_length_bytes: item.contentLengthBytes ?? null,
       }),
     });
-  } catch {
-    // PocketDL may be offline; the popup can show connection state later.
+    if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+    await recordCaptureAttempt({ ok: true, at: Date.now() });
+  } catch (error) {
+    // PocketDL may be offline or rejected the capture; recorded so the
+    // popup can surface it instead of the capture silently vanishing.
+    await recordCaptureAttempt({
+      ok: false,
+      at: Date.now(),
+      error: error instanceof Error ? error.message : 'Failed to reach PocketDL',
+    });
   }
+}
+
+async function recordCaptureAttempt(status: CaptureAttemptStatus): Promise<void> {
+  await chrome.storage.local.set({ lastCaptureAttempt: status });
 }
 
 chrome.webRequest.onBeforeRequest.addListener(

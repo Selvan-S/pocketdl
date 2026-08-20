@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Extension popup actions (Phase 4)
+- Added a Remove button to each captured-stream card, wired to the existing
+  `DELETE /api/captures/{id}` endpoint the PWA's `CaptureList` already used —
+  no backend changes needed.
+- Added an Open button that opens the PWA at `?capture=<id>`; the PWA now
+  scrolls to, expands, and briefly highlights that capture card, then strips
+  the query param.
+- Replaced the absolute capture timestamp with a relative age ("5m ago"),
+  keeping the exact time as a hover tooltip.
+- `background.ts`'s capture-post fetch never checked `response.ok`, so a
+  4xx/5xx from the backend (not just a network failure) was silently treated
+  as success and the capture just vanished with no signal anywhere. It now
+  records the outcome of every attempt to `chrome.storage.local`, and the
+  popup shows a dismissible banner on the most recent failure instead of
+  nothing.
+- "Show duration/size/resolution in popup" and "Popup Download action",
+  also listed under this roadmap phase, turned out to already be
+  implemented. "Capture quality ranking" (grouping a master manifest with
+  its variant sub-manifests into one selectable card) remains out of scope —
+  it needs its own domain-model/API design, tracked separately.
+
+### Connection status resilience
+- The PWA's "Connecting…"/"Backend connected" pill was gated behind
+  `Promise.all` over four endpoints (downloads, system status, captures,
+  settings); one endpoint failing kept the pill stuck on "Connecting…"
+  forever even though most of the API was healthy and `/api/health` reported
+  fine. Switched to `Promise.allSettled` so each piece of state updates
+  independently and only a genuinely failing request surfaces in the status
+  message.
+- The backend-served PWA build never served `/manifest.webmanifest` (404) —
+  only `/` and `/assets` were mounted. Added the missing route.
+
 ### Format selection (Phase 3)
 - `AnalyzeResult.tsx` was built but never imported anywhere; `DownloadForm.tsx`
   rendered a separate minimal inline summary instead, so the format list

@@ -25,17 +25,25 @@ export default function App() {
   const refreshSeq = useRef(0);
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
-    const [items, system, captured, nextSettings] = await Promise.all([
+    // Each call is independent: one endpoint failing (e.g. /api/system/status
+    // shelling out to check yt-dlp/ffmpeg) must not stop the others from
+    // updating or leave the connection pill stuck on "Connecting…" forever.
+    const [items, system, captured, nextSettings] = await Promise.allSettled([
       api.listDownloads(),
       api.status(),
       api.listCaptures(),
       api.settings(),
     ]);
     if (seq !== refreshSeq.current) return;
-    setDownloads(items);
-    setStatus(system);
-    setCaptures(captured);
-    setSettings(nextSettings);
+    if (items.status === 'fulfilled') setDownloads(items.value);
+    if (system.status === 'fulfilled') setStatus(system.value);
+    if (captured.status === 'fulfilled') setCaptures(captured.value);
+    if (nextSettings.status === 'fulfilled') setSettings(nextSettings.value);
+    const failed = [items, system, captured, nextSettings].find((r) => r.status === 'rejected');
+    if (failed) {
+      const reason = (failed as PromiseRejectedResult).reason;
+      setMessage(reason instanceof Error ? reason.message : 'Failed to load some data.');
+    }
   }, []);
 
   useEffect(() => {
@@ -43,6 +51,26 @@ export default function App() {
     const timer = window.setInterval(() => refresh().catch(() => undefined), 2000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  // Supports the extension popup's "Open" action (?capture=<id>): scrolls to
+  // and briefly highlights the matching capture once it has loaded, then
+  // strips the query param so a page refresh doesn't re-trigger it.
+  const scrolledToCaptureRef = useRef(false);
+  useEffect(() => {
+    if (scrolledToCaptureRef.current || captures.length === 0) return;
+    const captureId = new URLSearchParams(window.location.search).get('capture');
+    if (!captureId) return;
+    const target = document.getElementById(`capture-${captureId}`);
+    if (!target) return;
+    scrolledToCaptureRef.current = true;
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('highlighted');
+    window.setTimeout(() => target.classList.remove('highlighted'), 3000);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('capture');
+    window.history.replaceState(null, '', url.toString());
+  }, [captures]);
 
   async function addDownload(payload: DownloadCreateRequest) {
     await api.createDownload(payload);

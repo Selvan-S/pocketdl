@@ -186,14 +186,42 @@ later release."
 A from-scratch mobile setup guide (`docs/MOBILE_SETUP_GUIDE.md`) has also
 been written and linked from README.md and `docs/termux.md`.
 
-This work is on branch `feature/format-quality-analysis` (commits `47b470a`,
-`a82912a`), pushed to origin, not yet merged — per the established workflow
-the user opens the PR and merges via GitHub themselves, then this branch
-should be deleted locally and remotely and `main` re-synced.
+That work merged via PR #10 (`6388bb5`); `main` is synced and the merged
+branch (plus the earlier `fix/capture-dedup-and-size`, PR #9) deleted
+locally. Remote copies of both were left for the user to clean up via
+GitHub at their convenience.
+
+## Phase 4 extension popup polish — done (this increment)
+Branch `feature/extension-ux-phase4`. Prompted by two user reports that
+turned out to be two different things:
+- The PWA's "Connecting…" pill never flipped to connected despite the API
+  working — a real bug (`App.tsx`'s `Promise.all` over four endpoints let
+  one failure block the pill forever), fixed with `Promise.allSettled`
+  (commit `06c077b`). A missing `/manifest.webmanifest` route was fixed in
+  the same commit.
+- "No format selection in the extension" — not a regression. PR #10 only
+  ever touched the PWA (`apps/web`); the extension popup has never had
+  format selection, and the closest analog for captures (grouping a master
+  manifest with its quality-variant sub-manifests) is real, unimplemented
+  work that needs its own domain-model/API design, not a quick fix. The
+  user chose to defer that and scope this branch to the smaller, genuinely
+  missing Phase 4 popup items instead (commit `f4a492f`): remove/dismiss,
+  an Open-in-PocketDL action with PWA-side scroll-to-highlight, relative
+  capture age, and a dismissible offline banner (the popup's background
+  capture-post fetch never checked `response.ok`, so a backend-rejected or
+  offline capture vanished with zero signal — now recorded and surfaced).
+  See `docs_POCKETDL_ROADMAP.md` Phase 4 for the itemized done/open split.
+
+Verified: extension `typecheck`/`build` clean, web `build` (`tsc -b` +
+vite) clean, backend's 43-test suite unaffected (no backend changes in this
+increment). Not yet verified: interactive Chrome — loading the unpacked
+extension, capturing a real stream, and exercising Remove/Open/the offline
+banner by hand. That needs a real browser session and was not done as part
+of this change; do it before merging.
 
 Nothing is currently blocking. The next reasonable increment is either: pick
-up one of the remaining Phase 2 items above, or move into Phase 4 (extension
-UX: capture quality ranking, popup download action, freshness/age) — CLAUDE.md's
-"do not start v0.3 [format] work until mobile baseline is working" gate has
-been satisfied, so there is no standing reason to avoid feature breadth
-beyond normal judgment about what's highest-value next.
+up one of the remaining Phase 2 items above, or the deferred Phase 4 capture
+quality-ranking/grouping work (its own dedicated plan, given the domain/API
+scope) — CLAUDE.md's "do not start v0.3 [format] work until mobile baseline
+is working" gate has been satisfied, so there is no standing reason to avoid
+feature breadth beyond normal judgment about what's highest-value next.

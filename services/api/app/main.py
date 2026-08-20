@@ -64,6 +64,10 @@ if WEB_DIST.exists():
     async def web_root() -> FileResponse:
         return FileResponse(WEB_DIST / 'index.html')
 
+    @app.get('/manifest.webmanifest', include_in_schema=False)
+    async def web_manifest() -> FileResponse:
+        return FileResponse(WEB_DIST / 'manifest.webmanifest')
+
 
 if __name__ == '__main__':
     import uvicorn
