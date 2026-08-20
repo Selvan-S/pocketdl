@@ -25,17 +25,25 @@ export default function App() {
   const refreshSeq = useRef(0);
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
-    const [items, system, captured, nextSettings] = await Promise.all([
+    // Each call is independent: one endpoint failing (e.g. /api/system/status
+    // shelling out to check yt-dlp/ffmpeg) must not stop the others from
+    // updating or leave the connection pill stuck on "Connecting…" forever.
+    const [items, system, captured, nextSettings] = await Promise.allSettled([
       api.listDownloads(),
       api.status(),
       api.listCaptures(),
       api.settings(),
     ]);
     if (seq !== refreshSeq.current) return;
-    setDownloads(items);
-    setStatus(system);
-    setCaptures(captured);
-    setSettings(nextSettings);
+    if (items.status === 'fulfilled') setDownloads(items.value);
+    if (system.status === 'fulfilled') setStatus(system.value);
+    if (captured.status === 'fulfilled') setCaptures(captured.value);
+    if (nextSettings.status === 'fulfilled') setSettings(nextSettings.value);
+    const failed = [items, system, captured, nextSettings].find((r) => r.status === 'rejected');
+    if (failed) {
+      const reason = (failed as PromiseRejectedResult).reason;
+      setMessage(reason instanceof Error ? reason.message : 'Failed to load some data.');
+    }
   }, []);
 
   useEffect(() => {
