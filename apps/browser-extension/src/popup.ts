@@ -189,6 +189,9 @@ document.querySelector<HTMLDivElement>('#banner')?.addEventListener('click', (ev
   void chrome.storage.local.set({ lastCaptureAttempt: null }).then(() => renderBanner(null));
 });
 
+const versionLabel = document.querySelector<HTMLSpanElement>('#version');
+if (versionLabel) versionLabel.textContent = `v${chrome.runtime.getManifest().version}`;
+
 void getBackendUrl().then((url) => {
   const input = document.querySelector<HTMLInputElement>('#backend-url');
   if (input) input.value = url;

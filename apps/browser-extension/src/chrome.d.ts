@@ -1,4 +1,8 @@
 declare namespace chrome {
+  namespace runtime {
+    function getManifest(): { version: string };
+  }
+
   namespace storage {
     namespace local {
       function get<T extends Record<string, unknown>>(keys: T): Promise<T>;

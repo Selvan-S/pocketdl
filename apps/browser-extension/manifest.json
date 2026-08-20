@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PocketDL Capture",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Capture HLS and DASH media requests and send them to a local PocketDL backend.",
   "minimum_chrome_version": "110",
   "permissions": [
