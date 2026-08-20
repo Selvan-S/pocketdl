@@ -254,6 +254,9 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 .capture-card {
   padding: 0;
   overflow: hidden;
+  outline: 2px solid transparent;
+  outline-offset: -1px;
+  transition: outline-color 1.5s ease;
 }
 .capture-card > summary {
   list-style: none;
@@ -273,6 +276,7 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 }
 .capture-card[open] .capture-chevron { font-size: 0 !important; }
 .capture-card[open] .capture-chevron::after { content: '−'; font-size: 18px; }
+.capture-card.highlighted { outline-color: #2f6df6; }
 .capture-expanded {
   padding: 0 16px 16px;
   border-top: 1px solid #202b44;

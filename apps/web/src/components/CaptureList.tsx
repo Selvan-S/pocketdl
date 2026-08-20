@@ -66,7 +66,7 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
   };
 
   return (
-    <details className="capture-card">
+    <details id={`capture-${item.id}`} className="capture-card">
       <summary className="capture-summary">
         <div className="capture-card-header">
           <div className="capture-card-title">

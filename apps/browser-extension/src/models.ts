@@ -10,3 +10,12 @@ export interface PendingRequest {
   contentType?: string;
   contentLengthBytes?: number;
 }
+
+// Written by background.ts after every attempt to post a capture to the
+// backend, read by popup.ts so a silently-dropped capture (backend offline,
+// validation error) is still visible to the user instead of vanishing.
+export interface CaptureAttemptStatus {
+  ok: boolean;
+  at: number;
+  error?: string;
+}

@@ -1,4 +1,7 @@
 import { DEFAULT_BACKEND_URL, getBackendUrl, normalizeBackendUrl } from './config.js';
+import type { CaptureAttemptStatus } from './models.js';
+
+let latestItems: CaptureItem[] = [];
 
 interface CaptureItem {
   id: string;
@@ -51,6 +54,17 @@ function formatDuration(seconds: number | null): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 
+function formatAge(createdAt: string): string {
+  const then = new Date(createdAt).getTime();
+  if (!Number.isFinite(then)) return '';
+  const minutes = Math.floor((Date.now() - then) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 function metadataText(item: CaptureItem): string {
   if (item.metadata_status === 'pending') return 'Analyzing…';
   const parts = [`Duration ${formatDuration(item.duration_seconds)}`, `Size ${formatBytes(item.size_bytes)}`];
@@ -59,6 +73,7 @@ function metadataText(item: CaptureItem): string {
 }
 
 function render(items: CaptureItem[]): void {
+  latestItems = items;
   const root = document.querySelector<HTMLDivElement>('#captures');
   if (!root) return;
   root.innerHTML = items.slice(0, 8).map((item) => `
@@ -70,8 +85,12 @@ function render(items: CaptureItem[]): void {
       </summary>
       <div class="capture-body">
         <span>${escapeHtml(item.page_url || 'Captured media')}</span>
-        <small>${new Date(item.created_at).toLocaleTimeString()}</small>
-        <button class="download" data-action="download" data-capture-id="${escapeHtml(item.id)}">Download</button>
+        <small title="${escapeHtml(new Date(item.created_at).toLocaleString())}">${escapeHtml(formatAge(item.created_at))}</small>
+        <div class="capture-actions">
+          <button class="download" data-action="download" data-capture-id="${escapeHtml(item.id)}">Download</button>
+          <button class="secondary" data-action="open" data-capture-id="${escapeHtml(item.id)}">Open</button>
+          <button class="secondary" data-action="remove" data-capture-id="${escapeHtml(item.id)}">Remove</button>
+        </div>
       </div>
     </details>
   `).join('') || '<p class="muted">No captured streams yet.</p>';
@@ -96,6 +115,42 @@ async function downloadCapture(id: string): Promise<void> {
   }
 }
 
+async function removeCapture(id: string): Promise<void> {
+  const button = document.querySelector<HTMLButtonElement>(`button[data-action="remove"][data-capture-id="${CSS.escape(id)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Removing…';
+  }
+  try {
+    await request(`/api/captures/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    render(latestItems.filter((item) => item.id !== id));
+  } catch (error) {
+    if (button) button.textContent = 'Failed';
+    const status = document.querySelector<HTMLDivElement>('#status');
+    if (status) status.textContent = error instanceof Error ? error.message : 'Remove failed';
+  }
+}
+
+async function openCapture(id: string): Promise<void> {
+  const backendUrl = await getBackendUrl();
+  await chrome.tabs.create({ url: `${backendUrl}/?capture=${encodeURIComponent(id)}` });
+}
+
+function renderBanner(attempt: CaptureAttemptStatus | null): void {
+  const banner = document.querySelector<HTMLDivElement>('#banner');
+  if (!banner) return;
+  if (!attempt || attempt.ok) {
+    banner.classList.remove('visible');
+    banner.innerHTML = '';
+    return;
+  }
+  banner.classList.add('visible');
+  banner.innerHTML = `
+    <span>PocketDL was unreachable when a capture was attempted at ${escapeHtml(new Date(attempt.at).toLocaleTimeString())} — it may not have been recorded.</span>
+    <button class="dismiss" data-action="dismiss-banner" type="button">Dismiss</button>
+  `;
+}
+
 async function refresh(): Promise<void> {
   const status = document.querySelector<HTMLDivElement>('#status');
   try {
@@ -105,6 +160,8 @@ async function refresh(): Promise<void> {
   } catch (error) {
     if (status) status.textContent = `Offline · ${error instanceof Error ? error.message : 'cannot connect'}`;
   }
+  const { lastCaptureAttempt } = await chrome.storage.local.get<{ lastCaptureAttempt: CaptureAttemptStatus | null }>({ lastCaptureAttempt: null });
+  renderBanner(lastCaptureAttempt);
 }
 
 document.querySelector<HTMLFormElement>('#settings')?.addEventListener('submit', async (event) => {
@@ -119,9 +176,17 @@ document.querySelector<HTMLFormElement>('#settings')?.addEventListener('submit',
 document.querySelector<HTMLDivElement>('#captures')?.addEventListener('click', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
-  if (target.dataset.action !== 'download') return;
   const id = target.dataset.captureId;
-  if (id) void downloadCapture(id);
+  if (!id) return;
+  if (target.dataset.action === 'download') void downloadCapture(id);
+  else if (target.dataset.action === 'open') void openCapture(id);
+  else if (target.dataset.action === 'remove') void removeCapture(id);
+});
+
+document.querySelector<HTMLDivElement>('#banner')?.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement) || target.dataset.action !== 'dismiss-banner') return;
+  void chrome.storage.local.set({ lastCaptureAttempt: null }).then(() => renderBanner(null));
 });
 
 void getBackendUrl().then((url) => {

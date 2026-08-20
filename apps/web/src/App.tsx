@@ -52,6 +52,26 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
+  // Supports the extension popup's "Open" action (?capture=<id>): scrolls to
+  // and briefly highlights the matching capture once it has loaded, then
+  // strips the query param so a page refresh doesn't re-trigger it.
+  const scrolledToCaptureRef = useRef(false);
+  useEffect(() => {
+    if (scrolledToCaptureRef.current || captures.length === 0) return;
+    const captureId = new URLSearchParams(window.location.search).get('capture');
+    if (!captureId) return;
+    const target = document.getElementById(`capture-${captureId}`);
+    if (!target) return;
+    scrolledToCaptureRef.current = true;
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('highlighted');
+    window.setTimeout(() => target.classList.remove('highlighted'), 3000);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('capture');
+    window.history.replaceState(null, '', url.toString());
+  }, [captures]);
+
   async function addDownload(payload: DownloadCreateRequest) {
     await api.createDownload(payload);
     setMessage('Added to queue.');
