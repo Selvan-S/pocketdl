@@ -180,15 +180,32 @@ Never use raw signed m3u8 query strings in filenames.
 
 # Phase 4 — Browser experience
 
-## Extension improvements
-- Better capture deduplication.
-- Capture quality ranking.
-- Show duration/size/resolution in popup.
-- Popup Download action.
-- Open in PocketDL action.
-- Capture freshness/age.
-- Clear/ignore capture actions.
-- Better status/connection handling.
+## Extension improvements — partially done
+Done (popup polish, no backend changes needed beyond one existing endpoint
+reused):
+- Show duration/size/resolution in popup — already implemented
+  (`metadataText()` in `popup.ts`) before this pass; not a gap after all.
+- Popup Download action — already implemented before this pass.
+- Clear/ignore capture actions — Remove button added, reuses the existing
+  `DELETE /api/captures/{id}` endpoint the PWA already used.
+- Open in PocketDL action — Open button opens the PWA at `?capture=<id>`;
+  the PWA scrolls to, expands, and briefly highlights that card.
+- Capture freshness/age — relative age ("5m ago") replaces the absolute
+  timestamp, exact time kept as a tooltip.
+- Better status/connection handling — `background.ts` now checks
+  `response.ok` when posting a capture (previously any non-throwing fetch,
+  including 4xx/5xx, counted as success) and records the outcome; the popup
+  shows a dismissible banner on the most recent failure instead of the
+  capture silently vanishing with zero signal.
+
+Still open, not attempted:
+- Capture quality ranking — grouping a master manifest with its own
+  quality-variant sub-manifests into one selectable card. Deliberately
+  deferred: this needs the same new mechanism as Phase 2's still-open
+  master/variant manifest grouping item (new domain model, API shape
+  change, UI in both the PWA and the extension), not just a popup tweak.
+- Better capture deduplication beyond what Phase 2 already covers — shares
+  the same open dependency as quality ranking above.
 
 ## Browser session support — future, explicit feature
 Only if required by real sites.
