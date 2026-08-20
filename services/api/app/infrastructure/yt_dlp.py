@@ -30,6 +30,16 @@ class YtDlpService:
         self.settings = settings
         self.captured_media = captured_media
         self._processes: dict[str, asyncio.subprocess.Process] = {}
+        # yt-dlp/ffmpeg/aria2 versions only change on an explicit "Update
+        # yt-dlp" action or a backend restart, never mid-session, so there is
+        # no reason to re-spawn three subprocesses on every /system/status
+        # poll (every 2s from the PWA). On Android/Termux specifically, a
+        # backgrounded app gets its CPU throttled, so each of those three
+        # sequential subprocess.run(..., timeout=10) calls can take the full
+        # 10s instead of completing instantly — up to 30s per request,
+        # compounding as new polls fire before the previous one resolves.
+        self._cached_versions: dict[str, str | None] | None = None
+        self._versions_lock = asyncio.Lock()
 
     @staticmethod
     def _tool_version(command: list[str]) -> str | None:
@@ -41,15 +51,29 @@ class YtDlpService:
         except (OSError, subprocess.TimeoutExpired):
             return None
 
-    async def versions(self) -> dict[str, str | None]:
-        return await asyncio.to_thread(self._versions_sync)
-
     def _versions_sync(self) -> dict[str, str | None]:
         return {
             'yt_dlp': self._tool_version([sys.executable, '-m', 'yt_dlp', '--version']),
             'ffmpeg': self._tool_version(['ffmpeg', '-version']),
             'aria2': self._tool_version(['aria2c', '--version']),
         }
+
+    async def versions(self) -> dict[str, str | None]:
+        if self._cached_versions is not None:
+            return self._cached_versions
+        # Lock so concurrent callers during the cold-start window (e.g.
+        # several overlapping polls before the first call resolves) await the
+        # same in-flight computation instead of each spawning their own three
+        # subprocesses.
+        async with self._versions_lock:
+            if self._cached_versions is None:
+                self._cached_versions = await asyncio.to_thread(self._versions_sync)
+            return self._cached_versions
+
+    async def refresh_versions(self) -> dict[str, str | None]:
+        async with self._versions_lock:
+            self._cached_versions = await asyncio.to_thread(self._versions_sync)
+            return self._cached_versions
 
     async def update_yt_dlp(self) -> str | None:
         process = await asyncio.create_subprocess_exec(
@@ -61,7 +85,7 @@ class YtDlpService:
         if process.returncode != 0:
             details = (output or b'').decode(errors='replace').strip()
             raise RuntimeError(f'yt-dlp update failed.\n{details}')
-        versions = await self.versions()
+        versions = await self.refresh_versions()
         return versions['yt_dlp']
 
 

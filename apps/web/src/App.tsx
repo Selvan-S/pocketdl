@@ -11,6 +11,13 @@ export default function App() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [captures, setCaptures] = useState<CaptureItem[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  // Tracks whether the *current* poll actually reached the backend, separate
+  // from `status` (which deliberately keeps its last-known-good value across
+  // a blip so displayed data doesn't flicker to empty). Without this, once
+  // connected the pill would keep claiming "Backend connected" forever even
+  // after the backend went unreachable, since `status` is only ever set on
+  // success and nothing ever cleared it.
+  const [connected, setConnected] = useState(false);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [message, setMessage] = useState('');
   const [updating, setUpdating] = useState(false);
@@ -36,7 +43,12 @@ export default function App() {
     ]);
     if (seq !== refreshSeq.current) return;
     if (items.status === 'fulfilled') setDownloads(items.value);
-    if (system.status === 'fulfilled') setStatus(system.value);
+    if (system.status === 'fulfilled') {
+      setStatus(system.value);
+      setConnected(true);
+    } else {
+      setConnected(false);
+    }
     if (captured.status === 'fulfilled') setCaptures(captured.value);
     if (nextSettings.status === 'fulfilled') setSettings(nextSettings.value);
     const failed = [items, system, captured, nextSettings].find((r) => r.status === 'rejected');
@@ -139,7 +151,7 @@ export default function App() {
           <p>Browser capture + yt-dlp + FFmpeg, in one local app.</p>
         </div>
         <div className="topbar-actions">
-          <div className="system-pill"><span className="dot" />{status ? 'Backend connected' : 'Connecting…'}</div>
+          <div className="system-pill"><span className="dot" />{connected ? 'Backend connected' : 'Connecting…'}</div>
           <button className="secondary compact" onClick={() => setSettingsOpen((value) => !value)}>{settingsOpen ? 'Close settings' : 'Settings'}</button>
         </div>
       </header>
@@ -230,7 +242,7 @@ export default function App() {
 
       <footer>
         <span className="footer-path">Downloads: {settings?.download_directory ?? 'Unavailable'}</span>
-        <span>PocketDL v{status?.app_version ?? '0.2.2'}</span>
+        <span>PocketDL v{status?.app_version ?? '0.2.3'}</span>
       </footer>
     </main>
   );
