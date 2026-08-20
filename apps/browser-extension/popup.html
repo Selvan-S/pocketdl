@@ -25,8 +25,12 @@
     .capture-meta, .capture-body span, .capture-body small, .muted { color: #8491aa; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .capture-warning { display: inline-block; padding: 3px 6px; border-radius: 999px; background: #3a2720; color: #ffbe92; font-size: 10px; font-weight: 700; white-space: normal; }
     .capture-body { padding: 0 10px 10px; display: grid; gap: 5px; }
-    .capture-actions { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; margin-top: 2px; }
+    .capture-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
     button.secondary { background: #1c2740; color: #cdd8f2; }
+    .capture-progress { margin-top: 7px; font-size: 12px; color: #aeb9ce; }
+    .capture-downloaded { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; font-size: 12px; color: #9fe6b0; }
+    .capture-downloaded button { padding: 6px 10px; margin-top: 0; }
+    .capture-error { margin-top: 4px; font-size: 11px; color: #ffbe92; }
     #banner { display: none; margin: 10px 0; padding: 8px 10px; border-radius: 9px; background: #3a2720; color: #ffbe92; font-size: 11px; }
     #banner.visible { display: grid; gap: 6px; }
     #banner button.dismiss { justify-self: start; background: transparent; color: #ffbe92; text-decoration: underline; padding: 0; font-weight: 400; }

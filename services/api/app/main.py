@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     capture_service = CaptureService(capture_repository, media_probe)
     captured_media = CapturedMediaService(settings.download_directory)
     downloader = YtDlpService(settings, captured_media)
-    queue = QueueService(repository, downloader, settings.max_concurrent_downloads)
+    queue = QueueService(repository, downloader, settings.max_concurrent_downloads, capture_repository)
     app.state.settings = settings
     app.state.default_download_directory = default_download_directory
     app.state.repository = repository

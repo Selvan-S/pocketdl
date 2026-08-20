@@ -27,6 +27,7 @@ export interface DownloadItem {
   source_type: 'standard' | 'captured';
   started_at: string | null;
   finished_at: string | null;
+  capture_id: string | null;
 }
 
 export interface DownloadCreateRequest {

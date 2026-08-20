@@ -60,6 +60,7 @@ def to_response(job) -> DownloadResponse:
         created_at=job.created_at,
         started_at=job.started_at,
         finished_at=job.finished_at,
+        capture_id=job.capture_id,
     )
 
 

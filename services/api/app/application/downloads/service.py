@@ -4,13 +4,20 @@ from datetime import datetime, timezone
 
 from ...core.filenames import sanitize_filename
 from ...domain.models import DownloadJob, DownloadSourceType, DownloadStatus, RequestContext
-from ...domain.ports import DownloadRepository, Downloader
+from ...domain.ports import CaptureRepository, DownloadRepository, Downloader
 
 
 class QueueService:
-    def __init__(self, repository: DownloadRepository, downloader: Downloader, max_concurrent: int) -> None:
+    def __init__(
+        self,
+        repository: DownloadRepository,
+        downloader: Downloader,
+        max_concurrent: int,
+        capture_repository: CaptureRepository | None = None,
+    ) -> None:
         self.repository = repository
         self.downloader = downloader
+        self.capture_repository = capture_repository
         self.semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.contexts: dict[str, RequestContext] = {}
@@ -58,6 +65,7 @@ class QueueService:
             created_at=datetime.now(timezone.utc),
             started_at=None,
             finished_at=None,
+            capture_id=capture_id,
         )
         await self.repository.add(job)
         self.contexts[job.id] = request_context
@@ -85,6 +93,10 @@ class QueueService:
                     capture_id=capture_id,
                     on_progress=self.repository.update,
                 )
+                if capture_id and self.capture_repository:
+                    finished = await self.repository.get(job_id)
+                    if finished is not None and finished.status is DownloadStatus.COMPLETED:
+                        await self.capture_repository.mark_downloaded(capture_id)
         finally:
             self.tasks.pop(job_id, None)
             self.contexts.pop(job_id, None)

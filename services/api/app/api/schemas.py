@@ -92,6 +92,7 @@ class DownloadResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    capture_id: str | None
 
 
 class SystemStatusResponse(BaseModel):
