@@ -212,16 +212,81 @@ turned out to be two different things:
   offline capture vanished with zero signal — now recorded and surfaced).
   See `docs_POCKETDL_ROADMAP.md` Phase 4 for the itemized done/open split.
 
-Verified: extension `typecheck`/`build` clean, web `build` (`tsc -b` +
-vite) clean, backend's 43-test suite unaffected (no backend changes in this
-increment). Not yet verified: interactive Chrome — loading the unpacked
-extension, capturing a real stream, and exercising Remove/Open/the offline
-banner by hand. That needs a real browser session and was not done as part
-of this change; do it before merging.
+That merged as PR #11 (`780d863`). On-device testing on the user's Android
+Termux setup then surfaced two further real bugs, fixed on
+`fix/connection-staleness-and-versioning` (PR #12, `2f8126d`):
+- The extension popup was silently running stale cached code after
+  reinstalling from the packaged zip — root cause: `manifest.json`'s version
+  had sat at `0.2.2` through several real feature merges, giving Quetta no
+  signal that anything changed. Bumped to `0.2.3` everywhere it's tracked
+  (extension manifest, both `package.json`s, backend `pyproject.toml`/
+  `config.py`) and added a version label to the popup itself
+  (`chrome.runtime.getManifest().version`) so this is visually checkable
+  going forward, not just inferred.
+- The PWA's connection pill, once connected, never reflected a *later* real
+  outage — `status` was only ever set on success and nothing cleared it.
+  Fixed with a separate `connected` flag driven by the current poll's
+  success specifically.
+- The actual root cause of the on-device "stuck connecting" symptom:
+  `/api/system/status` re-ran three subprocess version checks (yt-dlp,
+  ffmpeg, aria2c; 10s timeout each) on *every* 2s poll. Fine on desktop;
+  on backgrounded Android/Termux, CPU throttling for new-process spawns
+  made this take up to ~30s per request, and since polling never waits for
+  the previous call to finish, overlapping slow requests piled up.
+  Diagnosed via `time curl` direct from Termux (fast, foreground) vs. the
+  same call through the browser (slow, Termux backgrounded) vs. Swagger
+  (confirmed ~30s). Fixed by caching the version check after the first
+  call — these never change mid-session except via the explicit "Update
+  yt-dlp" action. Verified live: 2.38s cold, 0.08s cached after.
 
-Nothing is currently blocking. The next reasonable increment is either: pick
-up one of the remaining Phase 2 items above, or the deferred Phase 4 capture
-quality-ranking/grouping work (its own dedicated plan, given the domain/API
-scope) — CLAUDE.md's "do not start v0.3 [format] work until mobile baseline
-is working" gate has been satisfied, so there is no standing reason to avoid
-feature breadth beyond normal judgment about what's highest-value next.
+Then, on request, live download progress in the extension popup
+(`feature/capture-download-progress`, PR #13, `9ef3db4`). Investigation
+found `capture_id` was already threaded through the entire
+download-creation call chain (`routes.py` → `QueueService.create` →
+`YtDlpService.download`) but never persisted or used —
+`CaptureRepository.mark_downloaded()` existed but nothing ever called it,
+so there was no way to look up a capture's resulting download or its live
+state at all. Fixed: `DownloadJob` now carries `capture_id` (idempotent
+migration, same pattern as the download table's other added columns);
+`QueueService` calls `mark_downloaded` when a captured download reaches
+`COMPLETED` (not on failure/cancellation). Side effect: the PWA's
+`status-badge.used` styling, present in the CSS but dead until now since
+`status` never left `'captured'`, is correct for free. The popup now polls
+`/api/downloads` alongside `/api/captures` and shows live progress →
+"Downloaded ✓ + Open folder" (reuses the existing open-download-directory
+endpoint) → or the error with a retry option on failure. A Copy-link
+button was added alongside Open/Remove. 3 new backend unit tests cover the
+completion/failure/no-capture-id orchestration paths (a real subprocess
+download couldn't be exercised end-to-end in the sandboxed dev environment
+used to build this — `asyncio.create_subprocess_exec` fails there for
+reasons confirmed unrelated to and pre-existing this change; Termux uses
+standard Linux subprocess spawning so this shouldn't apply there, but treat
+first real on-device test as the actual verification, not this note).
+
+All three branches (PR #11, #12, #13) are merged to `main` and confirmed
+working on-device by the user ("the website is working"). Local and remote
+tracking of the merged branches is cleaned up.
+
+## Deferred / not yet done
+- **Boot-service re-verification after this round's changes.** Running
+  `termux-boot-install.sh` printed "Termux:Boot app: not detected" — this
+  is a known best-effort-only check (Android package-visibility
+  restrictions on newer versions), not a real failure signal, and M6 was
+  already verified working via a real reboot before this round's changes.
+  User deferred re-verifying with a fresh reboot or the no-reboot
+  `bash ~/.termux/boot/pocketdl-start &` test; do that opportunistically,
+  not urgently.
+- **Capture quality ranking / master-variant manifest grouping** — the
+  repeatedly-deferred item (Phase 2 and Phase 4 both reference it). Grouping
+  a master `.m3u8` with its quality-variant sub-manifests into one
+  selectable card needs its own domain-model/API design (new grouping
+  entity, API shape change, UI in both the PWA and the extension) — treat
+  as its own dedicated plan-first increment, not a quick addition.
+- Remaining Phase 2 breadth items (multi-CDN/hostname dedup, HLS
+  segment-enumeration size estimates, user-configurable suspicious-capture
+  thresholds) — see `docs_POCKETDL_ROADMAP.md` Phase 2, still untouched.
+
+Nothing is currently blocking. User asked to continue remaining-phase work
+in a fresh session — the next reasonable increment is whichever of the
+above the user prioritizes; no standing reason to avoid feature breadth
+beyond normal judgment about what's highest-value next.

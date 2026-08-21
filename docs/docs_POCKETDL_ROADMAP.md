@@ -197,6 +197,18 @@ reused):
   including 4xx/5xx, counted as success) and records the outcome; the popup
   shows a dismissible banner on the most recent failure instead of the
   capture silently vanishing with zero signal.
+- Live download progress in the popup — not originally on this list, added
+  on request. `capture_id` was already threaded through the whole
+  download-creation call chain but never persisted or used;
+  `CaptureRepository.mark_downloaded()` existed but nothing ever called it.
+  Both fixed: `DownloadJob` now carries `capture_id`, and `QueueService`
+  calls `mark_downloaded` when a captured download reaches `COMPLETED`. The
+  popup polls `/api/downloads` alongside `/api/captures` and replaces the
+  Download button with live progress, then "Downloaded ✓ + Open folder" on
+  success (reuses the existing open-download-directory endpoint) or the
+  error + a retry option on failure.
+- Copy-link button on each card — `navigator.clipboard.writeText`, no new
+  permission needed.
 
 Still open, not attempted:
 - Capture quality ranking — grouping a master manifest with its own
