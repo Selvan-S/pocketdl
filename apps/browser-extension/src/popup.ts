@@ -2,6 +2,7 @@ import { DEFAULT_BACKEND_URL, getBackendUrl, normalizeBackendUrl } from './confi
 import type { CaptureAttemptStatus } from './models.js';
 
 let latestItems: CaptureItem[] = [];
+let latestDownloads: DownloadSummary[] = [];
 
 interface CaptureItem {
   id: string;
@@ -17,6 +18,15 @@ interface CaptureItem {
   height: number | null;
   metadata_status: 'pending' | 'ready' | 'failed';
   looks_suspicious: boolean;
+}
+
+interface DownloadSummary {
+  id: string;
+  capture_id: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  speed_bytes: number | null;
+  error: string | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -72,6 +82,35 @@ function metadataText(item: CaptureItem): string {
   return parts.join(' · ');
 }
 
+function downloadFor(captureId: string): DownloadSummary | undefined {
+  // /api/downloads is already ordered newest-first, so the first match per
+  // capture is the most recent attempt.
+  return latestDownloads.find((download) => download.capture_id === captureId);
+}
+
+function primaryActionHtml(item: CaptureItem): string {
+  const download = downloadFor(item.id);
+  if (!download || download.status === 'failed' || download.status === 'cancelled') {
+    const errorLine = download?.status === 'failed' && download.error
+      ? `<div class="capture-error">${escapeHtml(download.error)}</div>`
+      : '';
+    return `
+      <button class="download" data-action="download" data-capture-id="${escapeHtml(item.id)}">Download</button>
+      ${errorLine}
+    `;
+  }
+  if (download.status === 'queued' || download.status === 'running') {
+    const speed = download.speed_bytes ? ` · ${escapeHtml(formatBytes(download.speed_bytes))}/s` : '';
+    return `<div class="capture-progress">Downloading… ${Math.round(download.progress)}%${speed}</div>`;
+  }
+  return `
+    <div class="capture-downloaded">
+      <span>Downloaded ✓</span>
+      <button class="secondary" data-action="open-folder">Open folder</button>
+    </div>
+  `;
+}
+
 function render(items: CaptureItem[]): void {
   latestItems = items;
   const root = document.querySelector<HTMLDivElement>('#captures');
@@ -86,8 +125,9 @@ function render(items: CaptureItem[]): void {
       <div class="capture-body">
         <span>${escapeHtml(item.page_url || 'Captured media')}</span>
         <small title="${escapeHtml(new Date(item.created_at).toLocaleString())}">${escapeHtml(formatAge(item.created_at))}</small>
+        ${primaryActionHtml(item)}
         <div class="capture-actions">
-          <button class="download" data-action="download" data-capture-id="${escapeHtml(item.id)}">Download</button>
+          <button class="secondary" data-action="copy" data-capture-id="${escapeHtml(item.id)}" data-media-url="${escapeHtml(item.media_url)}">Copy</button>
           <button class="secondary" data-action="open" data-capture-id="${escapeHtml(item.id)}">Open</button>
           <button class="secondary" data-action="remove" data-capture-id="${escapeHtml(item.id)}">Remove</button>
         </div>
@@ -136,6 +176,31 @@ async function openCapture(id: string): Promise<void> {
   await chrome.tabs.create({ url: `${backendUrl}/?capture=${encodeURIComponent(id)}` });
 }
 
+async function copyCapture(id: string, mediaUrl: string): Promise<void> {
+  const button = document.querySelector<HTMLButtonElement>(`button[data-action="copy"][data-capture-id="${CSS.escape(id)}"]`);
+  try {
+    await navigator.clipboard.writeText(mediaUrl);
+    if (button) {
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(() => { if (button) button.textContent = original; }, 1500);
+    }
+  } catch (error) {
+    if (button) button.textContent = 'Failed';
+    const status = document.querySelector<HTMLDivElement>('#status');
+    if (status) status.textContent = error instanceof Error ? error.message : 'Copy failed';
+  }
+}
+
+async function openDownloadFolder(): Promise<void> {
+  try {
+    await request('/api/settings/open-download-directory', { method: 'POST' });
+  } catch (error) {
+    const status = document.querySelector<HTMLDivElement>('#status');
+    if (status) status.textContent = error instanceof Error ? error.message : 'Unable to open download folder';
+  }
+}
+
 function renderBanner(attempt: CaptureAttemptStatus | null): void {
   const banner = document.querySelector<HTMLDivElement>('#banner');
   if (!banner) return;
@@ -153,6 +218,11 @@ function renderBanner(attempt: CaptureAttemptStatus | null): void {
 
 async function refresh(): Promise<void> {
   const status = document.querySelector<HTMLDivElement>('#status');
+  try {
+    latestDownloads = await request<DownloadSummary[]>('/api/downloads');
+  } catch {
+    // Best-effort: progress/downloaded state just won't be current this cycle.
+  }
   try {
     const items = await request<CaptureItem[]>('/api/captures');
     render(items);
@@ -176,11 +246,17 @@ document.querySelector<HTMLFormElement>('#settings')?.addEventListener('submit',
 document.querySelector<HTMLDivElement>('#captures')?.addEventListener('click', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
+  const action = target.dataset.action;
+  if (action === 'open-folder') {
+    void openDownloadFolder();
+    return;
+  }
   const id = target.dataset.captureId;
   if (!id) return;
-  if (target.dataset.action === 'download') void downloadCapture(id);
-  else if (target.dataset.action === 'open') void openCapture(id);
-  else if (target.dataset.action === 'remove') void removeCapture(id);
+  if (action === 'download') void downloadCapture(id);
+  else if (action === 'open') void openCapture(id);
+  else if (action === 'remove') void removeCapture(id);
+  else if (action === 'copy') void copyCapture(id, target.dataset.mediaUrl ?? '');
 });
 
 document.querySelector<HTMLDivElement>('#banner')?.addEventListener('click', (event) => {
