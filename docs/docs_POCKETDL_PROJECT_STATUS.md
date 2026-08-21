@@ -290,3 +290,34 @@ Nothing is currently blocking. User asked to continue remaining-phase work
 in a fresh session — the next reasonable increment is whichever of the
 above the user prioritizes; no standing reason to avoid feature breadth
 beyond normal judgment about what's highest-value next.
+
+## Download robustness fixes — done (this increment)
+User hit two real-site failures while testing and asked, separately,
+whether broader "HTTP/any other stream" support was even on the roadmap.
+Answer: it already is — the standard path (yt-dlp) already covers direct
+HTTP files via its generic extractor, and the captured path (ffmpeg)
+already treats any captured URL generically regardless of container. Both
+failures were robustness edge cases in that existing coverage, not missing
+stream-type support; see `docs_POCKETDL_ROADMAP.md` Phase 2 for the fuller
+writeup. Fixed, with regression tests (`test_ffmpeg_args.py`,
+`test_yt_dlp_args.py`, additions to `test_download_errors.py`; suite now
+62 tests, all passing):
+- FFmpeg captured downloads failing with exit 183
+  (`is not in allowed_segment_extensions`) on sites that disguise HLS
+  playlists/segments as `.txt`/`.css`. Added `-allowed_extensions ALL` to
+  the ffmpeg and ffprobe invocations in `CapturedMediaService`
+  (`services/api/app/infrastructure/ffmpeg.py`).
+- Standard yt-dlp downloads failing with
+  `[SSL: CERTIFICATE_VERIFY_FAILED] ... unable to get local issuer
+  certificate` on sites serving an incomplete cert chain that browsers
+  silently repair via AIA chasing but Python's `ssl` module does not. Added
+  a new `SSL_CERTIFICATE_ERROR` category and a one-shot
+  `--no-check-certificate` retry, visible in the attempt label and
+  `job.error_details` rather than a silent default
+  (`services/api/app/application/downloads/strategy.py`,
+  `services/api/app/infrastructure/yt_dlp.py`).
+
+Not yet done: neither fix has been verified against the actual reported
+URLs on the user's machine (both were fixed from the yt-dlp/ffmpeg error
+text and known ffmpeg/OpenSSL behavior, not by re-running the failing
+download) — treat as the real verification step, not this note.

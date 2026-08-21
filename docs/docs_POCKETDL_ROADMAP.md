@@ -61,6 +61,34 @@ exit; `pocketdl-status.sh` is the health/startup indicator;
 
 # Phase 2 — Stabilization after mobile ← CURRENT
 
+## Download robustness — done (this increment)
+Two user-reported real-site failures, both fixed with regression tests:
+- Captured HLS download failing with `FFmpeg exited with code 183` /
+  `is not in allowed_segment_extensions`. The site serves its `.m3u8`
+  playlist and segments with `.txt`/`.css` extensions (an
+  ad-blocker/bandwidth-saver evasion trick common on some streaming sites);
+  ffmpeg's hls demuxer rejects segment URLs whose extension isn't on its
+  small built-in allowlist unless told otherwise. Fixed by adding
+  `-allowed_extensions ALL` to both the ffmpeg download command and the
+  ffprobe duration-probe call in `CapturedMediaService`.
+- Standard (yt-dlp) download of a direct `.mp4` URL failing with
+  `[SSL: CERTIFICATE_VERIFY_FAILED] ... unable to get local issuer
+  certificate`. The site sends an incomplete certificate chain (missing
+  intermediate) that browsers silently repair via AIA chasing but Python's
+  `ssl` module does not attempt. Fixed with a narrow, visible one-shot
+  retry: a new `SSL_CERTIFICATE_ERROR` category triggers a single retry of
+  the same attempt with `--no-check-certificate` (recorded in the attempt
+  label and `job.error_details`, not a silent blanket setting).
+
+This also answered a standing open question: whether "support for HTTP or
+other streams beyond HLS" was a missing roadmap item. It isn't — the
+standard path (yt-dlp's generic extractor) already handles direct HTTP
+files and hundreds of other site extractors, and the captured path
+(ffmpeg) already treats any captured URL generically regardless of
+container/protocol (HLS, DASH, or a direct file). The two failures above
+were robustness edge cases in that existing coverage, not gaps in
+stream-type support — there is no separate "add HTTP support" work item.
+
 ## Capture deduplication — partially done
 Fixed: signed tokens embedded in the media URL's *path* (not just the query
 string, which was already handled) no longer create a new card on every

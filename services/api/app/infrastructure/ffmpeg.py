@@ -42,11 +42,35 @@ class CapturedMediaService:
         if line == 'progress=end':
             job.progress = 100.0
 
+    @staticmethod
+    def _build_ffmpeg_args(url: str, output_path: Path, headers: str, user_agent: str | None) -> list[str]:
+        args = ['ffmpeg', '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning']
+        if headers:
+            args += ['-headers', headers]
+        if user_agent:
+            args += ['-user_agent', user_agent]
+        args += [
+            # Some sites disguise HLS playlists/segments with non-media
+            # extensions (.txt, .css) to dodge naive ad-blockers/bandwidth
+            # savers. ffmpeg's hls demuxer rejects segment URLs whose
+            # extension isn't on a small built-in allowlist unless told
+            # otherwise (exit 183, "not in allowed_segment_extensions").
+            '-allowed_extensions', 'ALL',
+            '-i', url,
+            '-map', '0:v:0?',
+            '-map', '0:a:0?',
+            '-c', 'copy',
+            '-movflags', '+faststart',
+            '-progress', 'pipe:1',
+            str(output_path),
+        ]
+        return args
+
     async def _probe_duration(self, url: str, context: RequestContext) -> int | None:
         ffprobe = shutil.which('ffprobe')
         if not ffprobe:
             return None
-        args = [ffprobe, '-v', 'error']
+        args = [ffprobe, '-v', 'error', '-allowed_extensions', 'ALL']
         headers = self._headers_block(context)
         if headers:
             args += ['-headers', headers]
@@ -95,20 +119,7 @@ class CapturedMediaService:
         return_code = 1
 
         for attempt_number in range(1, max_attempts + 1):
-            args = ['ffmpeg', '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning']
-            if headers:
-                args += ['-headers', headers]
-            if context.user_agent:
-                args += ['-user_agent', context.user_agent]
-            args += [
-                '-i', job.url,
-                '-map', '0:v:0?',
-                '-map', '0:a:0?',
-                '-c', 'copy',
-                '-movflags', '+faststart',
-                '-progress', 'pipe:1',
-                str(output_path),
-            ]
+            args = self._build_ffmpeg_args(job.url, output_path, headers, context.user_agent)
 
             process = await asyncio.create_subprocess_exec(
                 *args,

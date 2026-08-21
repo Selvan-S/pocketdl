@@ -11,6 +11,7 @@ class DownloadErrorCategory(StrEnum):
     FORMAT_ERROR = 'format_error'
     FFMPEG_ERROR = 'ffmpeg_error'
     NETWORK_ERROR = 'network_error'
+    SSL_CERTIFICATE_ERROR = 'ssl_certificate_error'
     AUTHENTICATION_REQUIRED = 'authentication_required'
     RATE_LIMITED = 'rate_limited'
     CANCELLED = 'cancelled'

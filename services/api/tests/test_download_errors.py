@@ -1,5 +1,11 @@
 from app.application.downloads.errors import classify_download_error
-from app.application.downloads.strategy import should_retry_with_ffmpeg, should_retry_with_impersonation
+from app.application.downloads.strategy import (
+    DownloadAttempt,
+    should_retry_with_ffmpeg,
+    should_retry_with_impersonation,
+    should_retry_without_cert_verification,
+    without_cert_verification,
+)
 from app.domain.errors import DownloadErrorCategory
 from app.domain.models import DownloadJob, DownloadSourceType, ImpersonationMode, RequestContext
 from app.domain.models import DownloadStatus
@@ -47,3 +53,33 @@ def test_chrome_mode_does_not_repeat_impersonation_retry() -> None:
 
 def test_detects_live_hls_fallback() -> None:
     assert should_retry_with_ffmpeg('WARNING: Live HLS streams are not supported by the native downloader.')
+
+
+def test_classifies_ssl_certificate_verify_failed() -> None:
+    output = (
+        "UNKNOWN: ERROR: [generic] video: Unable to download webpage: "
+        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+        "unable to get local issuer certificate (_ssl.c:1032)"
+    )
+    assert classify_download_error(output) is DownloadErrorCategory.SSL_CERTIFICATE_ERROR
+
+
+def test_retries_without_cert_verification_only_once_per_attempt() -> None:
+    standard = DownloadAttempt(label='standard')
+    assert should_retry_without_cert_verification(DownloadErrorCategory.SSL_CERTIFICATE_ERROR, standard)
+    assert not should_retry_without_cert_verification(DownloadErrorCategory.HTTP_403, standard)
+
+    retried = without_cert_verification(standard)
+    assert retried.no_check_certificate is True
+    assert retried.label == 'standard+no-check-certificate'
+    # Already retried once for this failure -- don't loop forever on a
+    # site whose SSL is broken for reasons other than a missing chain.
+    assert not should_retry_without_cert_verification(DownloadErrorCategory.SSL_CERTIFICATE_ERROR, retried)
+
+
+def test_without_cert_verification_preserves_impersonation_and_ffmpeg_hls() -> None:
+    attempt = DownloadAttempt(label='impersonate:chrome+ffmpeg-hls', impersonate='chrome', use_ffmpeg_hls=True)
+    retried = without_cert_verification(attempt)
+    assert retried.impersonate == 'chrome'
+    assert retried.use_ffmpeg_hls is True
+    assert retried.no_check_certificate is True

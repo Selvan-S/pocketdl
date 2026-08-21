@@ -15,6 +15,8 @@ from ..application.downloads.strategy import (
     initial_attempt,
     should_retry_with_ffmpeg,
     should_retry_with_impersonation,
+    should_retry_without_cert_verification,
+    without_cert_verification,
 )
 from ..core.config import Settings
 from ..core.filenames import sanitize_filename
@@ -188,6 +190,8 @@ class YtDlpService:
             args += ['--downloader', 'ffmpeg', '--hls-use-mpegts']
         elif use_aria2 and shutil.which('aria2c'):
             args += ['--downloader', 'aria2c']
+        if attempt.no_check_certificate:
+            args.append('--no-check-certificate')
         args.append(job.url)
         return args
 
@@ -278,6 +282,12 @@ class YtDlpService:
                 await on_progress(job)
                 used_chrome = any(item.impersonate == 'chrome' for item in attempts)
                 return_code, output = await run_attempt(ffmpeg_hls_attempt(used_chrome))
+                error_category = classify_download_error(output)
+
+            if return_code != 0 and should_retry_without_cert_verification(error_category, attempts[-1]):
+                job.retry_count += 1
+                await on_progress(job)
+                return_code, output = await run_attempt(without_cert_verification(attempts[-1]))
                 error_category = classify_download_error(output)
 
             if job.status is DownloadStatus.CANCELLED:
