@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Download robustness: disguised HLS segment extensions and broken cert chains
+User-reported failures on two real sites, both fixed with regression tests:
+- A captured HLS download failed with `FFmpeg exited with code 183` /
+  `is not in allowed_segment_extensions`. The site serves its `.m3u8`
+  playlist and segments with `.txt`/`.css` extensions (a common
+  ad-blocker/bandwidth-saver evasion trick); ffmpeg's hls demuxer rejects
+  segment URLs whose extension isn't on its small built-in allowlist unless
+  told otherwise. Added `-allowed_extensions ALL` to both the ffmpeg
+  download command and the ffprobe duration-probe call in
+  `CapturedMediaService`.
+- A standard (yt-dlp) download of a direct `.mp4` URL failed with
+  `[SSL: CERTIFICATE_VERIFY_FAILED] ... unable to get local issuer
+  certificate`. The site serves an incomplete certificate chain (missing
+  intermediate) that browsers silently repair via AIA chasing but Python's
+  `ssl` module does not. Added a new, narrow retry fallback: on
+  `SSL_CERTIFICATE_ERROR` (a new `DownloadErrorCategory`), retry the same
+  attempt once more with `--no-check-certificate`, visible in the attempt
+  label (`...+no-check-certificate`) and in `job.error_details` rather than
+  silently disabling verification by default.
+
 ### Extension popup actions (Phase 4)
 - Added a Remove button to each captured-stream card, wired to the existing
   `DELETE /api/captures/{id}` endpoint the PWA's `CaptureList` already used —

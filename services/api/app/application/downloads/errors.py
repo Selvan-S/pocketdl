@@ -12,6 +12,8 @@ def classify_download_error(output: str) -> DownloadErrorCategory:
         return DownloadErrorCategory.UNSUPPORTED_URL
     if 'requested format is not available' in text or 'requested format not available' in text or 'format is not available' in text:
         return DownloadErrorCategory.FORMAT_ERROR
+    if 'certificate verify failed' in text or 'certificate_verify_failed' in text or 'ssl: cert' in text:
+        return DownloadErrorCategory.SSL_CERTIFICATE_ERROR
     if 'ffmpeg' in text and ('error' in text or 'failed' in text):
         return DownloadErrorCategory.FFMPEG_ERROR
     if 'rate limit' in text or 'too many requests' in text or 'http error 429' in text:

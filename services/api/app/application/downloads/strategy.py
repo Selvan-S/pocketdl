@@ -12,6 +12,7 @@ class DownloadAttempt:
     label: str
     impersonate: str | None = None
     use_ffmpeg_hls: bool = False
+    no_check_certificate: bool = False
 
 
 def looks_like_hls(job: DownloadJob, output: str) -> bool:
@@ -27,6 +28,24 @@ def should_retry_with_impersonation(job: DownloadJob, output: str, context: Requ
 
 def should_retry_with_ffmpeg(output: str) -> bool:
     return 'live hls streams are not supported by the native downloader' in output.lower()
+
+
+def should_retry_without_cert_verification(error_category: DownloadErrorCategory, attempt: DownloadAttempt) -> bool:
+    # Some sites serve an incomplete certificate chain (missing intermediate)
+    # that browsers tolerate via AIA chasing but Python's ssl module does
+    # not. Only retry once per attempt shape, and only for this specific
+    # failure -- this is a narrow, visible fallback (the attempt label
+    # records it), not a blanket "always skip verification" setting.
+    return error_category is DownloadErrorCategory.SSL_CERTIFICATE_ERROR and not attempt.no_check_certificate
+
+
+def without_cert_verification(attempt: DownloadAttempt) -> DownloadAttempt:
+    return DownloadAttempt(
+        label=f'{attempt.label}+no-check-certificate',
+        impersonate=attempt.impersonate,
+        use_ffmpeg_hls=attempt.use_ffmpeg_hls,
+        no_check_certificate=True,
+    )
 
 
 def initial_attempt(context: RequestContext) -> DownloadAttempt:
