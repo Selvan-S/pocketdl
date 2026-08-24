@@ -227,6 +227,7 @@ class YtDlpService:
         source_type: DownloadSourceType,
         capture_id: str | None,
         on_progress: ProgressCallback,
+        audio_url: str | None = None,
     ) -> DownloadJob:
         if source_type is DownloadSourceType.CAPTURED:
             return await self.captured_media.download(
@@ -234,6 +235,7 @@ class YtDlpService:
                 context=request_context,
                 retries=retries,
                 on_progress=on_progress,
+                audio_url=audio_url,
             )
 
         job.status = DownloadStatus.RUNNING

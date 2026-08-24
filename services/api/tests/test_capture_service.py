@@ -1,45 +1,8 @@
 import pytest
-from datetime import datetime
 
 from app.application.captures.service import CaptureService
 from app.domain.captures import CaptureType, MetadataStatus
-from app.infrastructure.media_probe import MediaProbeResult
-
-
-class FakeMediaProbe:
-    async def probe(self, url, context):
-        return MediaProbeResult(size_bytes=12_345, duration_seconds=12.5, width=1280, height=720)
-
-
-class InMemoryCaptureRepository:
-    def __init__(self):
-        self.items = {}
-
-    async def add(self, capture):
-        self.items[capture.id] = capture
-        return capture
-
-    async def get(self, capture_id):
-        return self.items.get(capture_id)
-
-    async def list(self, limit=50):
-        return list(self.items.values())[:limit]
-
-    async def find_by_source_key(self, source_key):
-        return next((item for item in self.items.values() if item.source_key == source_key), None)
-
-    async def update(self, capture):
-        self.items[capture.id] = capture
-        return capture
-
-    async def mark_downloaded(self, capture_id):
-        item = self.items.get(capture_id)
-        if item:
-            item.used_at = datetime.now()
-        return item
-
-    async def delete(self, capture_id):
-        self.items.pop(capture_id, None)
+from support import FakeMediaProbe, InMemoryCaptureRepository
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,26 @@
 import asyncio
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ...core.filenames import sanitize_filename
+from ...domain.errors import DownloadErrorCategory
 from ...domain.models import DownloadJob, DownloadSourceType, DownloadStatus, RequestContext
 from ...domain.ports import CaptureRepository, DownloadRepository, Downloader
+
+
+@dataclass(frozen=True, slots=True)
+class JobOptions:
+    """Per-job downloader settings held until the queued job actually runs."""
+
+    preset: str
+    format_id: str | None
+    concurrent_fragments: int
+    retries: int
+    use_aria2: bool
+    source_type: DownloadSourceType
+    capture_id: str | None
+    audio_url: str | None
 
 
 class QueueService:
@@ -21,7 +37,7 @@ class QueueService:
         self.semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.contexts: dict[str, RequestContext] = {}
-        self.options: dict[str, tuple[str, str | None, int, int, bool, DownloadSourceType, str | None]] = {}
+        self.options: dict[str, JobOptions] = {}
 
     async def create(
         self,
@@ -36,6 +52,7 @@ class QueueService:
         capture_id: str | None = None,
         title: str | None = None,
         format_id: str | None = None,
+        audio_url: str | None = None,
     ) -> DownloadJob:
         normalized_filename = sanitize_filename(filename) if filename else None
         if not normalized_filename and title:
@@ -69,7 +86,16 @@ class QueueService:
         )
         await self.repository.add(job)
         self.contexts[job.id] = request_context
-        self.options[job.id] = (preset, format_id, concurrent_fragments, retries, use_aria2, source_type, capture_id)
+        self.options[job.id] = JobOptions(
+            preset=preset,
+            format_id=format_id,
+            concurrent_fragments=concurrent_fragments,
+            retries=retries,
+            use_aria2=use_aria2,
+            source_type=source_type,
+            capture_id=capture_id,
+            audio_url=audio_url,
+        )
         self.tasks[job.id] = asyncio.create_task(self._run(job.id))
         return job
 
@@ -79,24 +105,41 @@ class QueueService:
                 latest = await self.repository.get(job_id)
                 if latest is None:
                     return
-                preset, format_id, concurrent_fragments, retries, use_aria2, source_type, capture_id = self.options[job_id]
+                options = self.options[job_id]
+                capture_id = options.capture_id
                 request_context = self.contexts[job_id]
                 await self.downloader.download(
                     latest,
-                    preset=preset,
-                    format_id=format_id,
-                    concurrent_fragments=concurrent_fragments,
-                    retries=retries,
-                    use_aria2=use_aria2,
+                    preset=options.preset,
+                    format_id=options.format_id,
+                    concurrent_fragments=options.concurrent_fragments,
+                    retries=options.retries,
+                    use_aria2=options.use_aria2,
                     request_context=request_context,
-                    source_type=source_type,
+                    source_type=options.source_type,
                     capture_id=capture_id,
+                    audio_url=options.audio_url,
                     on_progress=self.repository.update,
                 )
                 if capture_id and self.capture_repository:
                     finished = await self.repository.get(job_id)
                     if finished is not None and finished.status is DownloadStatus.COMPLETED:
                         await self.capture_repository.mark_downloaded(capture_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A downloader that raises instead of returning a failed job (a
+            # missing ffmpeg/yt-dlp binary is the common case) used to leave
+            # the job sitting at "running" forever, with the reason visible
+            # only in the server log.
+            job = await self.repository.get(job_id)
+            if job is not None and job.status not in {DownloadStatus.COMPLETED, DownloadStatus.CANCELLED}:
+                job.status = DownloadStatus.FAILED
+                job.error = f'{type(exc).__name__}: {exc}'
+                job.error_details = str(exc)
+                job.error_category = DownloadErrorCategory.UNKNOWN
+                job.finished_at = datetime.now(timezone.utc)
+                await self.repository.update(job)
         finally:
             self.tasks.pop(job_id, None)
             self.contexts.pop(job_id, None)

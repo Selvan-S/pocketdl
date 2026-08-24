@@ -13,6 +13,7 @@ from .application.downloads.service import QueueService
 from .application.captures.service import CaptureService
 from .infrastructure.captures import SqliteCaptureRepository
 from .infrastructure.ffmpeg import CapturedMediaService
+from .infrastructure.manifest_fetch import ManifestFetcher
 from .infrastructure.media_probe import MediaProbeService
 from .infrastructure.sqlite import SqliteDownloadRepository
 from .infrastructure.yt_dlp import YtDlpService
@@ -29,7 +30,8 @@ async def lifespan(app: FastAPI):
     capture_repository = SqliteCaptureRepository(settings.database_path)
     await capture_repository.initialize()
     media_probe = MediaProbeService()
-    capture_service = CaptureService(capture_repository, media_probe)
+    manifest_fetcher = ManifestFetcher()
+    capture_service = CaptureService(capture_repository, media_probe, manifest_fetcher)
     captured_media = CapturedMediaService(settings.download_directory)
     downloader = YtDlpService(settings, captured_media)
     queue = QueueService(repository, downloader, settings.max_concurrent_downloads, capture_repository)

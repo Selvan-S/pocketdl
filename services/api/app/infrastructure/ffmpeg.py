@@ -43,13 +43,16 @@ class CapturedMediaService:
             job.progress = 100.0
 
     @staticmethod
-    def _build_ffmpeg_args(url: str, output_path: Path, headers: str, user_agent: str | None) -> list[str]:
-        args = ['ffmpeg', '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning']
+    def _input_args(url: str, headers: str, user_agent: str | None) -> list[str]:
+        """Options for one input. ffmpeg applies these to the ``-i`` that
+        follows, so a second input needs its own copy rather than inheriting
+        the first one's."""
+        args: list[str] = []
         if headers:
             args += ['-headers', headers]
         if user_agent:
             args += ['-user_agent', user_agent]
-        args += [
+        return args + [
             # Some sites disguise HLS playlists/segments with non-media
             # extensions (.txt, .css) to dodge naive ad-blockers/bandwidth
             # savers. ffmpeg's hls demuxer rejects segment URLs whose
@@ -57,8 +60,28 @@ class CapturedMediaService:
             # otherwise (exit 183, "not in allowed_segment_extensions").
             '-allowed_extensions', 'ALL',
             '-i', url,
-            '-map', '0:v:0?',
-            '-map', '0:a:0?',
+        ]
+
+    @staticmethod
+    def _build_ffmpeg_args(
+        url: str,
+        output_path: Path,
+        headers: str,
+        user_agent: str | None,
+        audio_url: str | None = None,
+    ) -> list[str]:
+        args = ['ffmpeg', '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning']
+        args += CapturedMediaService._input_args(url, headers, user_agent)
+        if audio_url:
+            # A specific HLS quality whose master lists audio as a separate
+            # #EXT-X-MEDIA rendition: the variant playlist carries video only,
+            # so downloading it alone would produce a silent file. Mux the
+            # rendition in as a second input.
+            args += CapturedMediaService._input_args(audio_url, headers, user_agent)
+            args += ['-map', '0:v:0?', '-map', '1:a:0?']
+        else:
+            args += ['-map', '0:v:0?', '-map', '0:a:0?']
+        args += [
             '-c', 'copy',
             '-movflags', '+faststart',
             '-progress', 'pipe:1',
@@ -98,6 +121,7 @@ class CapturedMediaService:
         context: RequestContext,
         retries: int,
         on_progress: ProgressCallback,
+        audio_url: str | None = None,
     ) -> DownloadJob:
         job.status = DownloadStatus.RUNNING
         job.started_at = datetime.now(timezone.utc)
@@ -119,7 +143,7 @@ class CapturedMediaService:
         return_code = 1
 
         for attempt_number in range(1, max_attempts + 1):
-            args = self._build_ffmpeg_args(job.url, output_path, headers, context.user_agent)
+            args = self._build_ffmpeg_args(job.url, output_path, headers, context.user_agent, audio_url)
 
             process = await asyncio.create_subprocess_exec(
                 *args,

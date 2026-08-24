@@ -23,6 +23,20 @@ class MetadataStatus(StrEnum):
     FAILED = 'failed'
 
 
+class VariantStatus(StrEnum):
+    """Progress of resolving a capture's quality variants.
+
+    ``NONE`` means the question does not apply (a direct media or DASH
+    capture, or an HLS media playlist that is not a master), and is distinct
+    from ``FAILED``, where the master was worth reading but could not be.
+    """
+
+    PENDING = 'pending'
+    READY = 'ready'
+    FAILED = 'failed'
+    NONE = 'none'
+
+
 _UUID_SEGMENT_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 _HEX_TOKEN_SEGMENT_RE = re.compile(r'^[0-9a-f]{20,}$', re.IGNORECASE)
 _OPAQUE_TOKEN_SEGMENT_RE = re.compile(r'^[A-Za-z0-9_-]{24,}$')
@@ -74,6 +88,38 @@ def make_source_key(media_url: str, page_url: str | None, capture_type: CaptureT
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
 
+def make_variant_key(variant_url: str, page_url: str | None) -> str:
+    """Key a master's variant the way an incoming capture of that same URL
+    would be keyed, so the two can be matched and the duplicate card avoided.
+
+    A variant sub-playlist is always ``hls``: the browser classifies it by its
+    ``.m3u8`` extension exactly as it classified the master.
+    """
+    return make_source_key(variant_url, page_url, CaptureType.HLS)
+
+
+@dataclass(slots=True)
+class CaptureVariant:
+    """One quality level of a captured HLS master, as stored against it.
+
+    Variants are not captures of their own: they are never separate cards,
+    and the browser's own capture of a variant URL is folded back into the
+    master via :func:`make_variant_key`.
+    """
+
+    capture_id: str
+    position: int
+    variant_key: str
+    url: str
+    audio_url: str | None
+    bandwidth_bps: int | None
+    width: int | None
+    height: int | None
+    codecs: str | None
+    frame_rate: float | None
+    name: str | None
+
+
 @dataclass(slots=True)
 class CapturedSource:
     id: str
@@ -96,6 +142,7 @@ class CapturedSource:
     status: CaptureStatus
     created_at: datetime
     used_at: datetime | None
+    variants_status: VariantStatus = VariantStatus.PENDING
 
 
 # Configurable heuristics for the "very short/wrong capture" backlog item --

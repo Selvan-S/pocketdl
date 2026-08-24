@@ -7,6 +7,7 @@ from .schemas import (
     CaptureCreateRequest,
     CaptureDownloadRequest,
     CaptureResponse,
+    CaptureVariantResponse,
     DownloadCreateRequest,
     DownloadResponse,
     SystemStatusResponse,
@@ -17,7 +18,8 @@ from ..application.captures.service import CaptureService
 from ..core.path_settings import normalize_download_directory
 from ..core.platform import open_directory
 from ..core.settings_store import clear_download_directory, save_download_directory
-from ..domain.captures import CaptureType, is_suspicious_capture
+from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
+from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
 from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
 
 router = APIRouter(prefix='/api')
@@ -64,7 +66,34 @@ def to_response(job) -> DownloadResponse:
     )
 
 
-def capture_response(capture) -> CaptureResponse:
+def variant_response(variant: CaptureVariant, duration_seconds: float | None) -> CaptureVariantResponse:
+    stream = VariantStream(
+        index=variant.position,
+        url=variant.url,
+        bandwidth_bps=variant.bandwidth_bps,
+        width=variant.width,
+        height=variant.height,
+        codecs=variant.codecs,
+        frame_rate=variant.frame_rate,
+        name=variant.name,
+        audio_url=variant.audio_url,
+    )
+    return CaptureVariantResponse(
+        index=variant.position,
+        url=variant.url,
+        quality_label=quality_label(stream),
+        bandwidth_bps=variant.bandwidth_bps,
+        width=variant.width,
+        height=variant.height,
+        codecs=variant.codecs,
+        frame_rate=variant.frame_rate,
+        name=variant.name,
+        has_separate_audio=variant.audio_url is not None,
+        estimated_size_bytes=estimated_size_bytes(variant.bandwidth_bps, duration_seconds),
+    )
+
+
+def capture_response(capture, variants: list[CaptureVariant] | None = None) -> CaptureResponse:
     return CaptureResponse(
         id=capture.id,
         media_url=capture.media_url,
@@ -86,6 +115,8 @@ def capture_response(capture) -> CaptureResponse:
         status=capture.status,
         created_at=capture.created_at,
         used_at=capture.used_at,
+        variants_status=capture.variants_status,
+        variants=[variant_response(variant, capture.duration_seconds) for variant in variants or []],
     )
 
 
@@ -167,8 +198,10 @@ async def delete_download(job_id: str, request: Request) -> dict[str, bool]:
 
 @router.get('/captures', response_model=list[CaptureResponse])
 async def list_captures(request: Request) -> list[CaptureResponse]:
-    captures = await request.app.state.capture_repository.list()
-    return [capture_response(item) for item in captures]
+    capture_repository = request.app.state.capture_repository
+    captures = await capture_repository.list()
+    variants = await capture_repository.variants_for([item.id for item in captures])
+    return [capture_response(item, variants.get(item.id, [])) for item in captures]
 
 
 @router.post('/captures', response_model=CaptureResponse, status_code=status.HTTP_201_CREATED)
@@ -196,8 +229,13 @@ async def create_capture(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    background_tasks.add_task(request.app.state.capture_service.enrich_metadata, capture.id)
-    return capture_response(capture)
+    # Background tasks run in order, and reading the playlist is a single small
+    # HTTP request where the ffprobe enrichment can take tens of seconds -- so
+    # the quality list reaches the UI first rather than queueing behind it.
+    background_tasks.add_task(service.resolve_variants, capture.id)
+    background_tasks.add_task(service.enrich_metadata, capture.id)
+    variants = await request.app.state.capture_repository.list_variants(capture.id)
+    return capture_response(capture, variants)
 
 
 @router.post('/captures/{capture_id}/download', response_model=DownloadResponse, status_code=status.HTTP_201_CREATED)
@@ -208,6 +246,19 @@ async def download_capture(capture_id: str, request: Request, payload: CaptureDo
         raise HTTPException(status_code=404, detail='Capture not found')
 
     options = payload or CaptureDownloadRequest()
+    # A chosen quality downloads that variant's own sub-playlist. When the
+    # master lists audio as a separate rendition the variant carries video
+    # only, so its audio playlist is muxed in as a second ffmpeg input.
+    media_url = capture.media_url
+    audio_url: str | None = None
+    if options.variant_index is not None:
+        variants = await capture_repository.list_variants(capture_id)
+        selected = next((variant for variant in variants if variant.position == options.variant_index), None)
+        if selected is None:
+            raise HTTPException(status_code=422, detail='Unknown quality for this capture.')
+        media_url = selected.url
+        audio_url = selected.audio_url
+
     context = RequestContext(
         page_url=capture.page_url,
         referer=capture.referer,
@@ -217,7 +268,7 @@ async def download_capture(capture_id: str, request: Request, payload: CaptureDo
         impersonation=ImpersonationMode.NONE,
     )
     job = await request.app.state.queue.create(
-        capture.media_url,
+        media_url,
         options.filename,
         options.preset,
         options.concurrent_fragments,
@@ -227,6 +278,7 @@ async def download_capture(capture_id: str, request: Request, payload: CaptureDo
         source_type=DownloadSourceType.CAPTURED,
         capture_id=capture.id,
         title=capture.page_title,
+        audio_url=audio_url,
     )
     return to_response(job)
 

@@ -304,3 +304,49 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
   .capture-card > summary { padding: 13px; }
   .capture-expanded { padding: 0 13px 13px; }
 }
+
+/* Capture quality selection (master playlist variants) */
+.capture-quality-count {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #18233a;
+  color: #9fc6ff !important;
+  font-weight: 700;
+}
+.capture-quality { margin-top: 14px; }
+.capture-quality-title {
+  display: block;
+  margin-bottom: 8px;
+  color: #9ba8c0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.capture-quality-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.quality-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  /* Matches the 44px touch target the rest of the mobile UI uses. */
+  min-height: 44px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid #202b44;
+  background: #0c1322;
+  color: #cfd8ea;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.quality-chip strong { font-size: 12px; font-weight: 800; }
+.quality-chip span { color: #74829d; font-size: 10px; }
+.quality-chip:hover { border-color: #33456d; }
+.quality-chip.selected {
+  border-color: #4c7dff;
+  background: #17233d;
+  color: #e8ecf7;
+}
+.quality-chip.selected span { color: #a8b8d8; }
+.capture-quality-note { margin-top: 8px; color: #74829d; font-size: 11px; }
