@@ -89,7 +89,29 @@ container/protocol (HLS, DASH, or a direct file). The two failures above
 were robustness edge cases in that existing coverage, not gaps in
 stream-type support — there is no separate "add HTTP support" work item.
 
-## Capture deduplication — partially done
+## Capture deduplication — master/variant grouping done
+The last structural duplicate source is fixed. An HLS master playlist
+advertises the same video at several qualities, each as its own sub-playlist
+URL; a player fetches the master and then one or more variants, so browser
+capture saw each as a separate media request and made a card per quality.
+URL normalization could never fix this — the variants' paths differ
+genuinely, not by a rotating token — so the master playlist is now parsed
+(`app/domain/manifests.py`) and its variants recorded against the capture in
+a new `capture_variants` table. Capturing a variant returns the master's
+card; a variant that already had a card is absorbed when the master is
+parsed; historical duplicates self-heal on startup. The variants also became
+the quality selector this item and Phase 4's "capture quality ranking" both
+needed — see Phase 4.
+
+Scope note: HLS only. A DASH `.mpd` already carries every representation in
+the single file the player fetches, so it never produced duplicate cards.
+
+Still open, not attempted:
+- Multi-CDN / hostname rotation for the same content.
+- host/path normalization beyond token stripping, codec information, a
+  broader stable-identity hash.
+
+## Capture deduplication — earlier increment (signed path tokens)
 Fixed: signed tokens embedded in the media URL's *path* (not just the query
 string, which was already handled) no longer create a new card on every
 refresh. `normalize_media_url` replaces path segments that look like opaque,
@@ -100,16 +122,6 @@ distinguishable. "When a signed URL changes: update existing capture with
 newest URL/context, do not create an additional card" — done for this case.
 Historical captures self-heal via the existing startup re-keying pass.
 
-Still open, not attempted:
-- Grouping a master manifest with its own quality-variant sub-manifests
-  (`master.m3u8` vs `720p.m3u8`) into one card — these have genuinely
-  different paths, not a rotating token, so today's fix correctly leaves
-  them distinct. This needs a different mechanism (e.g. parsing the master
-  playlist's variant list) if it's wanted.
-- Multi-CDN / hostname rotation for the same content.
-- host/path normalization beyond token stripping, codec information, a
-  broader stable-identity hash.
-
 Test with players that refresh manifests frequently.
 
 ## Media metadata — partially done
@@ -119,14 +131,19 @@ multi-hundred-MB stream). Only a direct media capture's Content-Length is
 trusted as a real size now; hls/dash size is left unknown until ffprobe
 enrichment determines it, which is honest rather than wrong.
 
+Also done, via variant grouping: a per-quality size estimate
+(bandwidth x duration) and the estimate-vs-exact distinction this section
+asked for. It is named an estimate the whole way through
+(`estimated_size_bytes`, rendered `~1.2 GB est.`) and never written into
+`size_bytes`, where it would be indistinguishable from a measured
+Content-Length. Codecs, frame rate and bitrate are now carried per variant
+too.
+
 Still open, not attempted:
-- HLS segment enumeration for a best-effort size estimate when ffprobe can't
-  determine one.
-- codecs, frame rate, bitrate.
-- Never display an exact size when it is only an estimate — no
-  estimate-vs-exact UI distinction exists yet; today it's exact-or-unknown
-  ("—"), which side-steps the "never show a wrong exact number" requirement
-  without yet building the labeled-estimate UI this line originally asked for.
+- HLS segment enumeration for a size estimate when the playlist declares no
+  bandwidth and ffprobe cannot determine one.
+- Codecs/frame rate/bitrate for a capture that is *not* a master playlist —
+  those still come only from ffprobe.
 
 ## Short-media filtering — mostly done
 Implemented as a flag, never a hard delete, per this section's original
@@ -238,14 +255,21 @@ reused):
 - Copy-link button on each card — `navigator.clipboard.writeText`, no new
   permission needed.
 
+Capture quality ranking — done. Variant chips in the popup (and the PWA)
+select a specific quality, with a per-quality estimated size; the previously
+deferred domain model, API shape change and UI all landed together. See
+Phase 2's master/variant grouping entry.
+
+Two things found while building it:
+- The captured-download `preset` field was accepted by the API and then
+  ignored — the ffmpeg path never read it — so the PWA card presented a
+  quality selector that did nothing. Replaced with the real variant chips.
+- The popup rebuilt its list on every 5s poll, closing any expanded card.
+  Open state is now preserved, without which the quality picker is unusable.
+
 Still open, not attempted:
-- Capture quality ranking — grouping a master manifest with its own
-  quality-variant sub-manifests into one selectable card. Deliberately
-  deferred: this needs the same new mechanism as Phase 2's still-open
-  master/variant manifest grouping item (new domain model, API shape
-  change, UI in both the PWA and the extension), not just a popup tweak.
-- Better capture deduplication beyond what Phase 2 already covers — shares
-  the same open dependency as quality ranking above.
+- Better capture deduplication beyond what Phase 2 covers (multi-CDN /
+  hostname rotation).
 
 ## Browser session support — future, explicit feature
 Only if required by real sites.

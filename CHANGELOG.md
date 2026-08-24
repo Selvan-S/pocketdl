@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+### Capture quality selection: master/variant manifest grouping (0.2.4)
+The repeatedly-deferred backlog item from Phase 2 and Phase 4. An HLS master
+playlist advertises the same video at several qualities, each as its own
+sub-playlist URL, so a player fetching the master and then a variant produced
+a separate capture card per quality for one video. URL normalization could not
+fix this: the variants' paths differ genuinely, not by a rotating signed token.
+
+- New `app/domain/manifests.py` parses a master playlist's `#EXT-X-STREAM-INF`
+  variants — resolution, bandwidth, codecs, frame rate, name — resolving
+  relative and absolute URIs against the master. Attribute parsing handles
+  quoted values containing commas (`CODECS="avc1.4d401f,mp4a.40.2"`), which a
+  plain `split(',')` gets wrong.
+- New `app/infrastructure/manifest_fetch.py` fetches the playlist with the
+  captured browser context (Referer/Origin/User-Agent and approved headers),
+  using the standard library so no new runtime dependency is introduced. Reads
+  are size-capped, run in a worker thread, and carry the same one-shot
+  unverified-TLS retry the standard download path already uses for sites with
+  an incomplete certificate chain.
+- Variants are stored in a new `capture_variants` table (idempotent migration,
+  plus a `variants_status` column on `captures`) and keyed the same way an
+  incoming capture of that URL would be. Capturing a variant now returns the
+  master's card instead of creating a second one, and a variant that already
+  had its own card is absorbed when the master is parsed. Historical
+  duplicates self-heal on startup, alongside the existing re-keying pass.
+- `GET /api/captures` now returns each capture with its `variants` list and
+  `variants_status`; `POST /api/captures/{id}/download` accepts
+  `variant_index` to download one specific quality (422 for an unknown index).
+- When a master lists audio as a separate `#EXT-X-MEDIA` rendition, the chosen
+  variant's playlist carries video only. FFmpeg is now given the audio
+  rendition as a second input (`-map 0:v:0? -map 1:a:0?`) rather than
+  producing a silent file. Input options are repeated per input, since ffmpeg
+  applies them to the `-i` that follows.
+- Variant chips in both the PWA and the extension popup, with an estimated
+  size per quality (bandwidth x duration). The estimate is named as an
+  estimate the whole way through — `estimated_size_bytes`, rendered as
+  `~1.2 GB est.` — and never written into `size_bytes`, where it would be
+  indistinguishable from a measured Content-Length.
+- Scope: HLS only. A DASH `.mpd` already carries every representation in the
+  single file the player fetches, so it never produced duplicate cards; those
+  captures skip the fetch entirely.
+
+Related fixes found while building this:
+- The captured-download `preset` field (`best`/`1080p`/`720p`/`audio`) was
+  accepted by the API and then ignored — the ffmpeg path never read it. The
+  PWA's capture card presented it as a working quality selector. Replaced with
+  the real variant chips; when a source has no variants the card now says so
+  instead of offering a control that does nothing. The API field is unchanged
+  for compatibility.
+- The extension popup rebuilt its list every 5s poll, closing any expanded
+  card — tolerable when a card was only something to read, not when it holds a
+  quality picker. Open state is now preserved across renders.
+- A downloader that raised instead of returning a failed job (a missing
+  ffmpeg/yt-dlp binary is the common case) left the job at `running` forever,
+  with the reason only in the server log. `QueueService` now marks such a job
+  failed with the exception text. Found by running the new download path on a
+  machine without ffmpeg on PATH.
+- `QueueService`'s seven-element options tuple became a `JobOptions` dataclass.
+
+Backend suite: 86 passing (was 56).
+
+Not verified: the two-input ffmpeg command has unit coverage for its argument
+construction only. ffmpeg is not on PATH on the development machine used to
+build this, so no captured download was actually executed end-to-end — treat
+the first real download of a separate-audio variant as the verification.
+
 ### Download robustness: disguised HLS segment extensions and broken cert chains
 User-reported failures on two real sites, both fixed with regression tests:
 - A captured HLS download failed with `FFmpeg exited with code 183` /

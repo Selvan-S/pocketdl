@@ -29,3 +29,39 @@ def test_captured_ffmpeg_args_include_headers_and_user_agent() -> None:
     assert '-headers' in args
     assert '-user_agent' in args
     assert args[args.index('-user_agent') + 1] == 'Mozilla/5.0'
+
+
+def test_captured_ffmpeg_args_mux_a_separate_audio_rendition() -> None:
+    """When the master lists audio as its own #EXT-X-MEDIA rendition, the
+    chosen quality's playlist carries video only -- downloading it alone would
+    produce a silent file."""
+    args = CapturedMediaService._build_ffmpeg_args(
+        'https://cdn.example/hls/1080p/index.m3u8',
+        Path('/downloads/video.mp4'),
+        'Referer: https://site.example/\r\n',
+        'Mozilla/5.0',
+        'https://cdn.example/hls/audio/en.m3u8',
+    )
+
+    inputs = [args[index + 1] for index, value in enumerate(args) if value == '-i']
+    assert inputs == ['https://cdn.example/hls/1080p/index.m3u8', 'https://cdn.example/hls/audio/en.m3u8']
+    assert args[args.index('-map') + 1] == '0:v:0?'
+    assert '1:a:0?' in args
+    # ffmpeg applies input options to the -i that follows, so the second input
+    # needs its own copy rather than inheriting the first one's.
+    assert args.count('-headers') == 2
+    assert args.count('-user_agent') == 2
+    assert args.count('-allowed_extensions') == 2
+
+
+def test_captured_ffmpeg_args_take_audio_from_the_single_input_when_muxed() -> None:
+    args = CapturedMediaService._build_ffmpeg_args(
+        'https://cdn.example/hls/1080p/index.m3u8',
+        Path('/downloads/video.mp4'),
+        '',
+        None,
+    )
+
+    assert args.count('-i') == 1
+    assert '0:a:0?' in args
+    assert '1:a:0?' not in args

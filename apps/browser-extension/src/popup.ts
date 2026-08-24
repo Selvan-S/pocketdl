@@ -3,6 +3,20 @@ import type { CaptureAttemptStatus } from './models.js';
 
 let latestItems: CaptureItem[] = [];
 let latestDownloads: DownloadSummary[] = [];
+// The popup re-renders on a 5s poll, so a quality picked in the DOM would be
+// lost on the next tick. Undefined (or absent) means "let the site decide".
+const selectedVariants = new Map<string, number | undefined>();
+// Re-rendering drops the <details> open state with the old DOM, so it has to
+// be tracked here and restored.
+const expandedCaptures = new Set<string>();
+
+interface CaptureVariant {
+  index: number;
+  quality_label: string;
+  bandwidth_bps: number | null;
+  has_separate_audio: boolean;
+  estimated_size_bytes: number | null;
+}
 
 interface CaptureItem {
   id: string;
@@ -18,6 +32,8 @@ interface CaptureItem {
   height: number | null;
   metadata_status: 'pending' | 'ready' | 'failed';
   looks_suspicious: boolean;
+  variants_status: 'pending' | 'ready' | 'failed' | 'none';
+  variants: CaptureVariant[];
 }
 
 interface DownloadSummary {
@@ -82,6 +98,23 @@ function metadataText(item: CaptureItem): string {
   return parts.join(' · ');
 }
 
+function qualityHtml(item: CaptureItem): string {
+  if (item.variants.length === 0) return '';
+  const selected = selectedVariants.get(item.id);
+  const chip = (index: number | undefined, label: string, detail: string) => `
+    <button class="quality ${selected === index ? 'selected' : ''}" data-action="quality"
+      data-capture-id="${escapeHtml(item.id)}" ${index === undefined ? '' : `data-variant-index="${index}"`}>
+      ${escapeHtml(label)}${detail ? `<small>${escapeHtml(detail)}</small>` : ''}
+    </button>`;
+  const options = item.variants.map((variant) => {
+    // An HLS stream's exact size is unknowable before downloading, so this
+    // stays explicitly an estimate.
+    const detail = variant.estimated_size_bytes ? `~${formatBytes(variant.estimated_size_bytes)}` : '';
+    return chip(variant.index, variant.quality_label, detail);
+  });
+  return `<div class="capture-quality">${chip(undefined, 'Site default', '')}${options.join('')}</div>`;
+}
+
 function downloadFor(captureId: string): DownloadSummary | undefined {
   // /api/downloads is already ordered newest-first, so the first match per
   // capture is the most recent attempt.
@@ -116,7 +149,7 @@ function render(items: CaptureItem[]): void {
   const root = document.querySelector<HTMLDivElement>('#captures');
   if (!root) return;
   root.innerHTML = items.slice(0, 8).map((item) => `
-    <details class="capture">
+    <details class="capture" data-capture-id="${escapeHtml(item.id)}" ${expandedCaptures.has(item.id) ? 'open' : ''}>
       <summary>
         <span class="capture-title">${escapeHtml(item.page_title || item.capture_type.toUpperCase())}</span>
         <span class="capture-meta">${escapeHtml(metadataText(item))}</span>
@@ -125,6 +158,7 @@ function render(items: CaptureItem[]): void {
       <div class="capture-body">
         <span>${escapeHtml(item.page_url || 'Captured media')}</span>
         <small title="${escapeHtml(new Date(item.created_at).toLocaleString())}">${escapeHtml(formatAge(item.created_at))}</small>
+        ${qualityHtml(item)}
         ${primaryActionHtml(item)}
         <div class="capture-actions">
           <button class="secondary" data-action="copy" data-capture-id="${escapeHtml(item.id)}" data-media-url="${escapeHtml(item.media_url)}">Copy</button>
@@ -145,7 +179,7 @@ async function downloadCapture(id: string): Promise<void> {
   try {
     await request(`/api/captures/${encodeURIComponent(id)}/download`, {
       method: 'POST',
-      body: JSON.stringify({ preset: 'best' }),
+      body: JSON.stringify({ variant_index: selectedVariants.get(id) }),
     });
     if (button) button.textContent = 'Queued';
   } catch (error) {
@@ -243,6 +277,16 @@ document.querySelector<HTMLFormElement>('#settings')?.addEventListener('submit',
   await refresh();
 });
 
+// `toggle` does not bubble, so it is observed in the capture phase.
+document.querySelector<HTMLDivElement>('#captures')?.addEventListener('toggle', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLDetailsElement)) return;
+  const id = target.dataset.captureId;
+  if (!id) return;
+  if (target.open) expandedCaptures.add(id);
+  else expandedCaptures.delete(id);
+}, true);
+
 document.querySelector<HTMLDivElement>('#captures')?.addEventListener('click', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
@@ -253,6 +297,12 @@ document.querySelector<HTMLDivElement>('#captures')?.addEventListener('click', (
   }
   const id = target.dataset.captureId;
   if (!id) return;
+  if (action === 'quality') {
+    const raw = target.dataset.variantIndex;
+    selectedVariants.set(id, raw === undefined ? undefined : Number(raw));
+    render(latestItems);
+    return;
+  }
   if (action === 'download') void downloadCapture(id);
   else if (action === 'open') void openCapture(id);
   else if (action === 'remove') void removeCapture(id);

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { CaptureDownloadRequest, CaptureItem } from '../types/api';
+import type { CaptureDownloadRequest, CaptureItem, CaptureVariant } from '../types/api';
 
 interface CaptureActions {
   onDownload: (id: string, payload: CaptureDownloadRequest) => Promise<void>;
@@ -38,6 +38,17 @@ function metadataLabel(item: CaptureItem): string {
   return values.join(' · ');
 }
 
+function variantDetail(variant: CaptureVariant): string {
+  const parts: string[] = [];
+  if (variant.bandwidth_bps) parts.push(`${(variant.bandwidth_bps / 1_000_000).toFixed(1)} Mbps`);
+  if (variant.frame_rate) parts.push(`${Math.round(variant.frame_rate)} fps`);
+  // Never rendered as a plain size: an HLS stream's byte count cannot be known
+  // before downloading it, and a wrong exact number is worse than an honest
+  // approximate one.
+  if (variant.estimated_size_bytes) parts.push(`~${formatBytes(variant.estimated_size_bytes)} est.`);
+  return parts.join(' · ');
+}
+
 export function CaptureList({ items, onDownload, onDelete }: Props) {
   return (
     <section className="capture-list">
@@ -53,13 +64,18 @@ export function CaptureList({ items, onDownload, onDelete }: Props) {
 
 function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: CaptureItem }) {
   const [filename, setFilename] = useState(item.page_title ?? '');
-  const [preset, setPreset] = useState<CaptureDownloadRequest['preset']>('best');
+  // undefined means "let the site decide" -- ffmpeg reads the master and picks
+  // its default rather than us forcing a quality the user did not choose.
+  const [variantIndex, setVariantIndex] = useState<number | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+
+  const hasVariants = item.variants.length > 0;
+  const selected = item.variants.find((variant) => variant.index === variantIndex);
 
   const download = async () => {
     setBusy(true);
     try {
-      await onDownload(item.id, { filename: filename.trim() || undefined, preset });
+      await onDownload(item.id, { filename: filename.trim() || undefined, variant_index: variantIndex });
     } finally {
       setBusy(false);
     }
@@ -83,6 +99,7 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
           <span className="capture-source-kind">{item.capture_type.toUpperCase()}</span>
           {item.content_type && <span>{item.content_type}</span>}
           <span>{metadataLabel(item)}</span>
+          {hasVariants && <span className="capture-quality-count">{item.variants.length} qualities</span>}
           {item.looks_suspicious && <span className="capture-warning">Possibly a fragment, not the full video</span>}
         </div>
       </summary>
@@ -90,7 +107,7 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
       <div className="capture-expanded">
         <details className="capture-details">
           <summary>Show captured source</summary>
-          <code>{item.media_url}</code>
+          <code>{selected ? selected.url : item.media_url}</code>
         </details>
 
         <div className="capture-fields">
@@ -98,15 +115,46 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
             Filename
             <input value={filename} onChange={(e) => setFilename(e.target.value)} placeholder="Use page title" />
           </label>
-          <label>
-            Quality
-            <select value={preset} onChange={(e) => setPreset(e.target.value as CaptureDownloadRequest['preset'])}>
-              <option value="best">Best</option>
-              <option value="1080p">Up to 1080p</option>
-              <option value="720p">Up to 720p</option>
-              <option value="audio">Audio only</option>
-            </select>
-          </label>
+        </div>
+
+        <div className="capture-quality">
+          <span className="capture-quality-title">Quality</span>
+          {hasVariants ? (
+            <>
+              <div className="capture-quality-options">
+                <button
+                  type="button"
+                  className={`quality-chip ${variantIndex === undefined ? 'selected' : ''}`}
+                  onClick={() => setVariantIndex(undefined)}
+                >
+                  Site default
+                </button>
+                {item.variants.map((variant) => (
+                  <button
+                    key={variant.index}
+                    type="button"
+                    className={`quality-chip ${variantIndex === variant.index ? 'selected' : ''}`}
+                    onClick={() => setVariantIndex(variant.index)}
+                    title={variant.codecs ?? undefined}
+                  >
+                    <strong>{variant.quality_label}</strong>
+                    {variantDetail(variant) && <span>{variantDetail(variant)}</span>}
+                  </button>
+                ))}
+              </div>
+              {selected?.has_separate_audio && (
+                <div className="capture-quality-note">Audio is a separate track and will be merged in.</div>
+              )}
+            </>
+          ) : (
+            <div className="capture-quality-note">
+              {item.variants_status === 'pending'
+                ? 'Checking which qualities this source offers…'
+                : item.variants_status === 'failed'
+                  ? 'Could not read the playlist, so the site default quality will be downloaded.'
+                  : 'This source offers a single quality.'}
+            </div>
+          )}
         </div>
 
         {item.metadata_status === 'failed' && item.metadata_error && (

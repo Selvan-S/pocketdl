@@ -85,6 +85,22 @@ export interface AnalyzeResponse {
   formats: AnalyzedFormat[];
 }
 
+export interface CaptureVariant {
+  index: number;
+  url: string;
+  quality_label: string;
+  bandwidth_bps: number | null;
+  width: number | null;
+  height: number | null;
+  codecs: string | null;
+  frame_rate: number | null;
+  name: string | null;
+  has_separate_audio: boolean;
+  /** Bitrate x duration. An HLS stream's exact size is unknowable before
+   * downloading, so this must always be presented as an estimate. */
+  estimated_size_bytes: number | null;
+}
+
 export interface CaptureItem {
   id: string;
   media_url: string;
@@ -106,6 +122,8 @@ export interface CaptureItem {
   status: 'captured' | 'used';
   created_at: string;
   used_at: string | null;
+  variants_status: 'pending' | 'ready' | 'failed' | 'none';
+  variants: CaptureVariant[];
 }
 
 export interface CaptureDownloadRequest {
@@ -113,6 +131,9 @@ export interface CaptureDownloadRequest {
   preset?: 'best' | '1080p' | '720p' | 'audio';
   concurrent_fragments?: number;
   retries?: number;
+  /** Position in the capture's own variant list. Omitted downloads the
+   * master, leaving the quality choice to the player's default. */
+  variant_index?: number;
 }
 
 export interface SettingsResponse {

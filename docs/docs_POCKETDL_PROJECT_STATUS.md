@@ -103,25 +103,37 @@ URL → FastAPI → Queue → yt-dlp → FFmpeg → Download
 - Android target path should be `/storage/emulated/0/Download/PocketDL` or a UI-configured equivalent.
 
 ## Current known issues
-### Duplicate captures — improved
+### Duplicate captures — master/variant grouping done
+An HLS master playlist and its quality sub-playlists are now one card. The
+master is fetched with the captured browser context and parsed
+(`app/domain/manifests.py`); its variants are stored in a new
+`capture_variants` table and keyed the way an incoming capture of that URL
+would be, so capturing a variant returns the master's card rather than
+creating a second one. A variant that already had a card is absorbed when
+the master is parsed, and historical duplicates self-heal on startup.
+Verified live against a local playlist server: master + two variant captures
+produced one card with two selectable qualities.
+
+HLS only, by design — a DASH `.mpd` carries every representation in the one
+file the player fetches, so it never produced duplicate cards.
+
+Still open: multi-CDN / hostname rotation for the same content.
+
+### Duplicate captures — earlier increment (signed path tokens)
 Signed tokens embedded in the media URL's path (not just the query string,
 already handled) no longer create a new card per refresh; `normalize_media_url`
 strips opaque token-like path segments conservatively before hashing.
 Historical captures self-heal via the existing startup re-keying pass.
 
-Still open: grouping a master manifest with its own quality-variant
-sub-manifests into one card is a different problem (genuinely different
-paths) and remains unaddressed, as does multi-CDN/hostname rotation for the
-same content.
-
 ### Media size — improved
 hls/dash captures no longer report the manifest text file's Content-Length as
 the media's size (was showing e.g. "500 B" for a real multi-hundred-MB
 stream); only a direct media capture's Content-Length is trusted. hls/dash
-size is now left unknown ("—") rather than wrong, pending either ffprobe
-enrichment succeeding or a future HLS segment-enumeration estimate — the
-latter is unimplemented; exact size before download may be impossible for
-some HLS/DASH sources without it.
+size is left unknown ("—") rather than wrong when nothing better is known.
+A master playlist's variants now also carry a per-quality *estimate*
+(bandwidth x duration), named as an estimate all the way to the UI and never
+written into `size_bytes`. Still unimplemented: a segment-enumeration
+estimate for playlists that declare no bandwidth.
 
 ### Short/wrong captures — improved
 Suspicious captures are now marked, never deleted. `is_suspicious_capture` in
@@ -161,6 +173,42 @@ This produced:
 `ModuleNotFoundError: No module named 'app.application.downloads.service'`
 
 Before continuing Android development, audit Git tracking and ensure all `.py`, `.ts`, `.tsx`, config, test, and documentation files are tracked.
+
+## Capture quality selection — done (this increment)
+Branch `feature/master-variant-grouping`, version 0.2.4. Closes the
+repeatedly-deferred master/variant grouping item that Phase 2 and Phase 4
+both depended on: duplicate quality cards are gone, and the variants became
+the quality selector the extension popup was missing. Chips in both the PWA
+and the popup; `POST /api/captures/{id}/download` takes a `variant_index`.
+
+Design decisions worth keeping:
+- The playlist is fetched with the standard library, not a new HTTP
+  dependency — it is a small text file, and the backend's declared
+  dependency set should keep working from the documented install commands.
+- A chosen quality downloads that variant's own sub-playlist. When the
+  master lists audio as a separate `#EXT-X-MEDIA` rendition, the variant
+  carries video only, so the audio playlist is muxed in as a second ffmpeg
+  input. This was preferred over `-map p:N` against the master because the
+  argument construction is explicit and unit-testable rather than dependent
+  on ffmpeg's internal program numbering.
+- Variants are stored against the master, not as capture rows of their own,
+  so they can never become cards.
+
+Three unrelated defects surfaced and were fixed on the same branch:
+- The captured-download `preset` field was accepted and then ignored (the
+  ffmpeg path never read it), so the PWA showed a dead quality control.
+- The extension popup closed every expanded card on its 5s poll.
+- A downloader that raised instead of returning a failed job left the job at
+  `running` forever. Found by running the new download path on a machine
+  where ffmpeg is not on PATH.
+
+Not verified: ffmpeg is not on PATH on the development machine, so the
+two-input (video + separate audio) command has argument-level unit coverage
+only and no captured download was executed end-to-end. Treat the first real
+download of a separate-audio variant as the actual verification. Everything
+else — grouping, absorption, the API shape, variant-index download routing,
+the 422 on an unknown index, and the now-visible job failure — was verified
+live against a local playlist server.
 
 ## Immediate next action
 The Android baseline is complete: M1–M6 are all verified on-device, including
@@ -276,20 +324,22 @@ tracking of the merged branches is cleaned up.
   User deferred re-verifying with a fresh reboot or the no-reboot
   `bash ~/.termux/boot/pocketdl-start &` test; do that opportunistically,
   not urgently.
-- **Capture quality ranking / master-variant manifest grouping** — the
-  repeatedly-deferred item (Phase 2 and Phase 4 both reference it). Grouping
-  a master `.m3u8` with its quality-variant sub-manifests into one
-  selectable card needs its own domain-model/API design (new grouping
-  entity, API shape change, UI in both the PWA and the extension) — treat
-  as its own dedicated plan-first increment, not a quick addition.
+- **Capture quality ranking / master-variant manifest grouping** — done, see
+  "Capture quality selection" above. What remains from that area is the
+  first real on-device download of a variant whose audio is a separate
+  `#EXT-X-MEDIA` rendition: the two-input ffmpeg command has argument-level
+  unit coverage only, because ffmpeg is not on PATH on the development
+  machine.
 - Remaining Phase 2 breadth items (multi-CDN/hostname dedup, HLS
-  segment-enumeration size estimates, user-configurable suspicious-capture
-  thresholds) — see `docs_POCKETDL_ROADMAP.md` Phase 2, still untouched.
+  segment-enumeration size estimates for playlists that declare no
+  bandwidth, user-configurable suspicious-capture thresholds) — see
+  `docs_POCKETDL_ROADMAP.md` Phase 2, still untouched.
 
-Nothing is currently blocking. User asked to continue remaining-phase work
-in a fresh session — the next reasonable increment is whichever of the
-above the user prioritizes; no standing reason to avoid feature breadth
-beyond normal judgment about what's highest-value next.
+Nothing is currently blocking. The next reasonable increment is whichever of
+the above the user prioritizes, or Phase 5 download-manager breadth (SSE
+progress instead of polling, retry policies, concurrency limits, history);
+no standing reason to avoid feature breadth beyond normal judgment about
+what is highest-value next.
 
 ## Download robustness fixes — done (this increment)
 User hit two real-site failures while testing and asked, separately,

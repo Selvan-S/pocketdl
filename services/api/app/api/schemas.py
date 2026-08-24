@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..domain.captures import CaptureStatus, CaptureType
+from ..domain.captures import CaptureStatus, CaptureType, VariantStatus
 from ..domain.errors import DownloadErrorCategory
 from ..domain.models import ImpersonationMode, DownloadSourceType
 
@@ -179,6 +179,28 @@ class CaptureDownloadRequest(BaseModel):
     preset: Literal['best', '1080p', '720p', 'audio'] = 'best'
     concurrent_fragments: int = Field(default=8, ge=1, le=32)
     retries: int = Field(default=10, ge=1, le=100)
+    variant_index: int | None = Field(default=None, ge=0)
+    """Position of a quality from the capture's own variant list. Omitted
+    downloads the master, letting the player's default quality apply."""
+
+
+class CaptureVariantResponse(BaseModel):
+    """One selectable quality of a captured HLS master."""
+
+    index: int
+    url: str
+    quality_label: str
+    bandwidth_bps: int | None
+    width: int | None
+    height: int | None
+    codecs: str | None
+    frame_rate: float | None
+    name: str | None
+    has_separate_audio: bool
+    estimated_size_bytes: int | None
+    """Bitrate x duration. Named as an estimate all the way to the UI because
+    an HLS stream's exact byte size is not knowable before downloading it --
+    it must never be shown as if it were a measured size."""
 
 
 class CaptureResponse(BaseModel):
@@ -202,6 +224,8 @@ class CaptureResponse(BaseModel):
     status: CaptureStatus
     created_at: datetime
     used_at: datetime | None
+    variants_status: VariantStatus
+    variants: list[CaptureVariantResponse] = Field(default_factory=list)
 
 
 class SettingsResponse(BaseModel):

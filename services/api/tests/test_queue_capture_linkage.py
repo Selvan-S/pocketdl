@@ -105,3 +105,61 @@ async def test_standard_download_without_capture_id_never_touches_capture_reposi
 
     assert capture_repository.marked_downloaded == []
     assert job.capture_id is None
+
+
+class ExplodingDownloader:
+    """A downloader that raises instead of returning a failed job -- what a
+    missing ffmpeg/yt-dlp binary actually does."""
+
+    async def download(self, job: DownloadJob, *, on_progress, **kwargs) -> DownloadJob:
+        raise FileNotFoundError('[WinError 2] The system cannot find the file specified')
+
+    async def cancel(self, job_id: str) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_a_downloader_that_raises_marks_the_job_failed() -> None:
+    """Otherwise the job sits at "running" forever and the UI shows a download
+    that never finishes and never reports why."""
+    repository = InMemoryDownloadRepository()
+    service = QueueService(repository, ExplodingDownloader(), max_concurrent=1)
+
+    job = await service.create(
+        url='https://cdn.example/video/master.m3u8',
+        filename=None,
+        preset='best',
+        concurrent_fragments=1,
+        retries=1,
+        use_aria2=False,
+        request_context=RequestContext(),
+        source_type=DownloadSourceType.CAPTURED,
+    )
+    await service.tasks[job.id]
+
+    stored = await repository.get(job.id)
+    assert stored.status is DownloadStatus.FAILED
+    assert 'FileNotFoundError' in stored.error
+    assert stored.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_a_failing_downloader_does_not_mark_its_capture_used() -> None:
+    repository = InMemoryDownloadRepository()
+    capture_repository = FakeCaptureRepository()
+    service = QueueService(repository, ExplodingDownloader(), max_concurrent=1, capture_repository=capture_repository)
+
+    job = await service.create(
+        url='https://cdn.example/video/master.m3u8',
+        filename=None,
+        preset='best',
+        concurrent_fragments=1,
+        retries=1,
+        use_aria2=False,
+        request_context=RequestContext(),
+        source_type=DownloadSourceType.CAPTURED,
+        capture_id='capture-123',
+    )
+    await service.tasks[job.id]
+
+    assert capture_repository.marked_downloaded == []
