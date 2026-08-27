@@ -11,6 +11,8 @@ from .core.config import get_settings
 from .core.logging import configure_logging
 from .application.downloads.service import QueueService
 from .application.captures.service import CaptureService
+from .application.collections.service import CollectionService
+from .application.instagram.discovery import ProfileDiscoveryService
 from .infrastructure.captures import SqliteCaptureRepository
 from .infrastructure.collections import SqliteCollectionRepository
 from .infrastructure.ffmpeg import CapturedMediaService
@@ -40,6 +42,8 @@ async def lifespan(app: FastAPI):
     gallery_dl = GalleryDlService(settings, collection_repository)
     downloader = YtDlpService(settings, captured_media, gallery_dl)
     queue = QueueService(repository, downloader, settings.max_concurrent_downloads, capture_repository, collection_repository)
+    profile_discovery_service = ProfileDiscoveryService(gallery_dl)
+    collection_service = CollectionService(collection_repository, queue)
     app.state.settings = settings
     app.state.default_download_directory = default_download_directory
     app.state.repository = repository
@@ -48,6 +52,8 @@ async def lifespan(app: FastAPI):
     app.state.captured_media = captured_media
     app.state.collection_repository = collection_repository
     app.state.gallery_dl = gallery_dl
+    app.state.profile_discovery_service = profile_discovery_service
+    app.state.collection_service = collection_service
     app.state.downloader = downloader
     app.state.queue = queue
     yield

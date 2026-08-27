@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 
 from app.core.session_store import save_session_cookie
-from app.domain.collections import InstagramContentType
+from app.domain.collections import InstagramAuthRequiredError, InstagramContentType
 from app.domain.models import DownloadJob, DownloadSourceType, DownloadStatus, ImpersonationMode
-from app.infrastructure.gallery_dl import GalleryDlService, InstagramAuthRequiredError
+from app.infrastructure.gallery_dl import GalleryDlService
 
 
 class _StubSettings:

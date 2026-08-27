@@ -8,17 +8,31 @@ from .schemas import (
     CaptureDownloadRequest,
     CaptureResponse,
     CaptureVariantResponse,
+    CollectionCreateRequest,
+    CollectionDownloadRequest,
+    CollectionItemAddRequest,
+    CollectionItemResponse,
+    CollectionRenameRequest,
+    CollectionResponse,
     DownloadCreateRequest,
     DownloadResponse,
+    InstagramProfilePreviewRequest,
+    InstagramProfilePreviewResponse,
+    InstagramSessionRequest,
+    InstagramSessionStatusResponse,
+    ProfileItemPreviewResponse,
     SystemStatusResponse,
     SettingsResponse,
     SettingsUpdateRequest,
 )
 from ..application.captures.service import CaptureService
+from ..application.collections.service import CollectionService
 from ..core.path_settings import normalize_download_directory
 from ..core.platform import open_directory
+from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
 from ..core.settings_store import clear_download_directory, save_download_directory
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
+from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
 from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
 
@@ -117,6 +131,32 @@ def capture_response(capture, variants: list[CaptureVariant] | None = None) -> C
         used_at=capture.used_at,
         variants_status=capture.variants_status,
         variants=[variant_response(variant, capture.duration_seconds) for variant in variants or []],
+    )
+
+
+def collection_response(collection: Collection, item_count: int) -> CollectionResponse:
+    return CollectionResponse(
+        id=collection.id,
+        platform=collection.platform.value,
+        name=collection.name,
+        item_count=item_count,
+        created_at=collection.created_at,
+        updated_at=collection.updated_at,
+    )
+
+
+def collection_item_response(item: CollectionItem) -> CollectionItemResponse:
+    return CollectionItemResponse(
+        id=item.id,
+        collection_id=item.collection_id,
+        source_url=item.source_url,
+        content_type=item.content_type,
+        author_username=item.author_username,
+        caption=item.caption,
+        thumbnail_url=item.thumbnail_url,
+        external_id=item.external_id,
+        added_at=item.added_at,
+        downloaded_job_id=item.downloaded_job_id,
     )
 
 
@@ -362,3 +402,147 @@ async def system_status(request: Request) -> SystemStatusResponse:
 async def update_yt_dlp(request: Request) -> dict[str, object]:
     version = await request.app.state.downloader.update_yt_dlp()
     return {'ok': True, 'version': version}
+
+
+@router.post('/instagram/profile/preview', response_model=InstagramProfilePreviewResponse)
+async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, request: Request) -> InstagramProfilePreviewResponse:
+    service = request.app.state.profile_discovery_service
+    try:
+        items = await service.preview(payload.profile_url, [InstagramContentType(value) for value in payload.content_types])
+    except InstagramAuthRequiredError as exc:
+        raise HTTPException(status_code=401, detail=f'Instagram session required: {exc}') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return InstagramProfilePreviewResponse(items=[
+        ProfileItemPreviewResponse(
+            source_url=item.source_url, content_type=item.content_type, author_username=item.author_username,
+            caption=item.caption, thumbnail_url=item.thumbnail_url, external_id=item.external_id,
+        )
+        for item in items
+    ])
+
+
+@router.get('/instagram/session', response_model=InstagramSessionStatusResponse)
+async def get_instagram_session_status(request: Request) -> InstagramSessionStatusResponse:
+    settings = request.app.state.settings
+    return InstagramSessionStatusResponse(configured=has_session_cookie(settings.database_path, 'instagram'))
+
+
+@router.post('/instagram/session', response_model=InstagramSessionStatusResponse)
+async def set_instagram_session(payload: InstagramSessionRequest, request: Request) -> InstagramSessionStatusResponse:
+    settings = request.app.state.settings
+    try:
+        save_session_cookie(settings.database_path, 'instagram', '.instagram.com', payload.cookie_header)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return InstagramSessionStatusResponse(configured=True)
+
+
+@router.delete('/instagram/session')
+async def clear_instagram_session(request: Request) -> dict[str, bool]:
+    settings = request.app.state.settings
+    clear_session_cookie(settings.database_path, 'instagram')
+    return {'ok': True}
+
+
+@router.get('/collections', response_model=list[CollectionResponse])
+async def list_collections(request: Request) -> list[CollectionResponse]:
+    service: CollectionService = request.app.state.collection_service
+    collections = await service.list_collections()
+    responses = []
+    for collection in collections:
+        items = await service.list_items(collection.id)
+        responses.append(collection_response(collection, len(items)))
+    return responses
+
+
+@router.post('/collections', response_model=CollectionResponse, status_code=status.HTTP_201_CREATED)
+async def create_collection(payload: CollectionCreateRequest, request: Request) -> CollectionResponse:
+    service: CollectionService = request.app.state.collection_service
+    try:
+        collection = await service.create_collection(Platform(payload.platform), payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return collection_response(collection, 0)
+
+
+@router.get('/collections/{collection_id}', response_model=CollectionResponse)
+async def get_collection(collection_id: str, request: Request) -> CollectionResponse:
+    service: CollectionService = request.app.state.collection_service
+    collection = await service.get_collection(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail='Collection not found')
+    items = await service.list_items(collection_id)
+    return collection_response(collection, len(items))
+
+
+@router.put('/collections/{collection_id}', response_model=CollectionResponse)
+async def rename_collection(collection_id: str, payload: CollectionRenameRequest, request: Request) -> CollectionResponse:
+    service: CollectionService = request.app.state.collection_service
+    try:
+        collection = await service.rename_collection(collection_id, payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    items = await service.list_items(collection_id)
+    return collection_response(collection, len(items))
+
+
+@router.delete('/collections/{collection_id}')
+async def delete_collection(collection_id: str, request: Request) -> dict[str, bool]:
+    service: CollectionService = request.app.state.collection_service
+    await service.delete_collection(collection_id)
+    return {'ok': True}
+
+
+@router.get('/collections/{collection_id}/items', response_model=list[CollectionItemResponse])
+async def list_collection_items(collection_id: str, request: Request) -> list[CollectionItemResponse]:
+    service: CollectionService = request.app.state.collection_service
+    collection = await service.get_collection(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail='Collection not found')
+    items = await service.list_items(collection_id)
+    return [collection_item_response(item) for item in items]
+
+
+@router.post('/collections/{collection_id}/items', response_model=CollectionItemResponse, status_code=status.HTTP_201_CREATED)
+async def add_collection_item(collection_id: str, payload: CollectionItemAddRequest, request: Request) -> CollectionItemResponse:
+    service: CollectionService = request.app.state.collection_service
+    preview = ProfileItemPreview(
+        source_url=payload.source_url,
+        content_type=payload.content_type,
+        author_username=payload.author_username,
+        caption=payload.caption,
+        thumbnail_url=payload.thumbnail_url,
+        external_id=payload.external_id,
+    )
+    try:
+        item = await service.add_item(collection_id, preview)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return collection_item_response(item)
+
+
+@router.delete('/collections/{collection_id}/items/{item_id}')
+async def remove_collection_item(collection_id: str, item_id: str, request: Request) -> dict[str, bool]:
+    service: CollectionService = request.app.state.collection_service
+    await service.remove_item(collection_id, item_id)
+    return {'ok': True}
+
+
+@router.post('/collections/{collection_id}/download', response_model=list[DownloadResponse], status_code=status.HTTP_201_CREATED)
+async def download_collection(collection_id: str, payload: CollectionDownloadRequest, request: Request) -> list[DownloadResponse]:
+    service: CollectionService = request.app.state.collection_service
+    try:
+        jobs = await service.download_collection(
+            collection_id,
+            payload.item_ids,
+            request_context=RequestContext(impersonation=ImpersonationMode.NONE),
+            preset=payload.preset,
+            concurrent_fragments=payload.concurrent_fragments,
+            retries=payload.retries,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [to_response(job) for job in jobs]

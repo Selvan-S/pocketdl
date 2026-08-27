@@ -235,3 +235,105 @@ class SettingsResponse(BaseModel):
 
 class SettingsUpdateRequest(BaseModel):
     download_directory: str = Field(min_length=1, max_length=2000)
+
+
+class InstagramProfilePreviewRequest(BaseModel):
+    profile_url: str
+    content_types: list[Literal['post', 'carousel', 'reel', 'story', 'highlight']] = Field(
+        default_factory=lambda: ['post', 'reel', 'story', 'highlight'],
+    )
+
+    @field_validator('profile_url')
+    @classmethod
+    def validate_profile_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+            raise ValueError('profile_url must use http or https.')
+        return value
+
+    @field_validator('content_types')
+    @classmethod
+    def validate_content_types(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError('At least one content type must be requested.')
+        return value
+
+
+class ProfileItemPreviewResponse(BaseModel):
+    source_url: str
+    content_type: str
+    author_username: str | None
+    caption: str | None
+    thumbnail_url: str | None
+    external_id: str | None
+
+
+class InstagramProfilePreviewResponse(BaseModel):
+    items: list[ProfileItemPreviewResponse]
+
+
+class InstagramSessionRequest(BaseModel):
+    """Write-only: the raw pasted Cookie header value is validated and
+    stored, never echoed back by any response -- see
+    InstagramSessionStatusResponse."""
+
+    cookie_header: str = Field(min_length=1, max_length=8000)
+
+
+class InstagramSessionStatusResponse(BaseModel):
+    configured: bool
+
+
+class CollectionCreateRequest(BaseModel):
+    platform: Literal['instagram'] = 'instagram'
+    name: str = Field(min_length=1, max_length=200)
+
+
+class CollectionRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class CollectionResponse(BaseModel):
+    id: str
+    platform: str
+    name: str
+    item_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CollectionItemAddRequest(BaseModel):
+    source_url: str
+    content_type: Literal['post', 'carousel', 'reel', 'story', 'highlight']
+    author_username: str | None = Field(default=None, max_length=200)
+    caption: str | None = Field(default=None, max_length=5000)
+    thumbnail_url: str | None = Field(default=None, max_length=2000)
+    external_id: str | None = Field(default=None, max_length=200)
+
+    @field_validator('source_url')
+    @classmethod
+    def validate_source_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+            raise ValueError('source_url must use http or https.')
+        return value
+
+
+class CollectionItemResponse(BaseModel):
+    id: str
+    collection_id: str
+    source_url: str
+    content_type: str
+    author_username: str | None
+    caption: str | None
+    thumbnail_url: str | None
+    external_id: str | None
+    added_at: datetime
+    downloaded_job_id: str | None
+
+
+class CollectionDownloadRequest(BaseModel):
+    item_ids: list[str] | None = None
+    preset: Literal['best', '1080p', '720p', 'audio'] = 'best'
+    concurrent_fragments: int = Field(default=8, ge=1, le=32)
+    retries: int = Field(default=10, ge=1, le=100)

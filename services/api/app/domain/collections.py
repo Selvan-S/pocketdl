@@ -23,6 +23,13 @@ class InstagramContentType(StrEnum):
     HIGHLIGHT = 'highlight'
 
 
+class InstagramAuthRequiredError(RuntimeError):
+    """Raised when a profile fetch could not complete in a way that, in
+    current practice, means the profile needs an authenticated session
+    cookie -- see GalleryDlService.list_profile_items and CLAUDE.md's
+    "Important proven behavior" entry for how this was verified."""
+
+
 @dataclass(slots=True)
 class Collection:
     """A named, user-curated set of items to download together (a

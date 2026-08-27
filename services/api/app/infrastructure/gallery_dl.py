@@ -10,7 +10,7 @@ from ..core.config import Settings
 from ..core.filenames import sanitize_filename
 from ..core.media_paths import platform_media_path
 from ..core.session_store import has_session_cookie, scrub_cookie_values, session_cookie_file
-from ..domain.collections import InstagramContentType, ProfileItemPreview
+from ..domain.collections import InstagramAuthRequiredError, InstagramContentType, ProfileItemPreview
 from ..domain.models import DownloadJob, DownloadStatus, RequestContext
 from ..domain.ports import CollectionRepository
 
@@ -44,11 +44,6 @@ _MESSAGE_ERROR = -1  # (-1, {"error": ..., "message": ...}) -- our own sentinel,
 # assumed when this feature was designed. See
 # docs/docs_POCKETDL_ROADMAP.md Phase 5 for the full note.
 _AUTH_REQUIRED_MARKERS = ('notfounderror', 'login', 'checkpoint', '401', '403')
-
-
-class InstagramAuthRequiredError(RuntimeError):
-    """gallery-dl could not complete the request in a way that, in current
-    practice, means the profile needs an authenticated session cookie."""
 
 
 class GalleryDlService:
