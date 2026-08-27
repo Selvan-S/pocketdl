@@ -131,7 +131,7 @@ if [ "$CHECK_M2" -eq 1 ]; then
   [ -f "$HOME/.pocketdl/.env" ] && . "$HOME/.pocketdl/.env"
   if VENV_PYTHON="$(resolve_venv_python "$REPO_DIR")"; then
     pass "virtualenv present ($VENV_PYTHON)"
-    for mod in fastapi uvicorn pydantic aiosqlite yt_dlp curl_cffi gallery_dl; do
+    for mod in fastapi uvicorn pydantic aiosqlite yt_dlp curl_cffi gallery_dl instaloader; do
       if out="$("$VENV_PYTHON" -c "import $mod, sys; print(getattr($mod, '__version__', 'present'))" 2>&1)"; then
         pass "python module $mod — $out"
       else
