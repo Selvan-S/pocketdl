@@ -336,80 +336,111 @@ content types we want, under Termux) before committing to full layer-by-layer
 implementation, same as the Instagram plan's gallery-dl-on-Termux spike.
 
 ## Instagram pilot — implementation progress (branch feature/phase5-instagram-collections)
-Bottom-up build in progress per instagram-full-profile-plan.md's sequencing.
-Done so far, each landed as its own commit:
-- gallery-dl added as a dependency; desktop install spike passed (pure
-  Python, no native wheel step). Termux install still unverified.
-- Domain: `Collection`/`CollectionItem`/`ProfileItemPreview`
-  (`domain/collections.py`), `Platform` enum (Instagram only for now, field
-  present on Collection from the start), `DownloadEngine` on `DownloadJob`
-  orthogonal to `source_type`.
-- Persistence: `collections`/`collection_items` tables
-  (`infrastructure/collections.py`), `downloads.engine` column migration.
-- Security: session cookie storage (`core/session_store.py`) — user-pasted
-  browser Cookie header only, never a password, written as a Netscape
-  cookies.txt gallery-dl's `--cookies` flag reads, in its own gitignored
-  file separate from the main DB, never echoed back by any endpoint, with a
-  scrub helper for defense-in-depth against the value leaking into engine
-  error output.
-- Infrastructure: `GalleryDlService` (`infrastructure/gallery_dl.py`) —
-  `list_profile_items()` metadata-only discovery via `--resolve-json`,
-  parsing gallery-dl's stable Message-tuple wire protocol; `download()`
-  building `-D`/`-f` args via `media_paths.py`'s
-  `<root>/<platform>/<subfolders>/<filename>` layout, scrubbing the session
-  cookie out of captured output before it can reach `job.error_details`.
-- Engine dispatch: `DownloadJob.collection_item_id` threaded through
-  `QueueService`/`YtDlpService` exactly like the existing `capture_id`
-  (`_run()` calls `CollectionRepository.mark_item_downloaded` on
-  completion); `YtDlpService.download()` dispatches to `GalleryDlService`
-  when `job.engine is DownloadEngine.GALLERY_DL`, checked before the
-  existing `source_type` branch.
-- Application: `ProfileDiscoveryService` (validates the profile URL, thin
-  wrapper over discovery) and `CollectionService` (create/rename/delete a
-  collection, add/remove items, `download_collection` fans out into
-  `QueueService.create()` — one call per item, engine=GALLERY_DL — skipping
-  items that already completed).
-- API: `POST /api/instagram/profile/preview`,
-  `GET/POST/DELETE /api/instagram/session`,
-  `GET/POST /api/collections`, `GET/PUT/DELETE /api/collections/{id}`,
-  `GET/POST /api/collections/{id}/items`,
-  `DELETE /api/collections/{id}/items/{item_id}`,
-  `POST /api/collections/{id}/download`.
-- UI: `InstagramPanel.tsx` — session-cookie control, profile browser
-  (URL + content-type checkboxes → preview grid → add selection to a
-  playlist), playlists view (download all/selected, remove item, delete
-  playlist), as a new collapsible section on the main page.
 
-Important finding while building discovery (see CLAUDE.md's "Important
-proven behavior"): an unauthenticated profile fetch fails with a
-`NotFoundError` that looks like a wrong username, not a real 404 — every
-profile fetch needs the session cookie today, not just Stories/Highlights.
-`list_profile_items` now raises a distinct `InstagramAuthRequiredError` for
-this, mapped to HTTP 401. Verified live end-to-end in a real browser
-(Playwright driving the Vite dev server against the real FastAPI backend,
-no chromium-cli available in this sandbox so Playwright was installed
-directly): session save/clear, a real profile-preview call correctly
-hitting the 401 case and surfacing it as a clean message, and a real
-`download_collection` fan-out that queued and ran an actual gallery-dl job
-end to end, visible in the Download Queue, failing cleanly with
-`[instagram][error] HTTP redirect to login page` for the fake test
-credentials used. `classify_download_error` now recognizes that message as
-`authentication_required` rather than `unknown`.
+**Status: backend feature-complete on the instaloader engine; UI still on
+the old gallery-dl-era shape. Stopped here deliberately to hand off to a
+fresh session — see "Resuming this work" at the end of this section.**
 
-Field-mapping accuracy for a *successful* authenticated preview
-(username/caption/thumbnail extraction from gallery-dl's real JSON output)
-is implemented from gallery-dl's own source but **still not live-verified
-against a real signed-in session** — no login credentials were available
-during this pass, only the well-proven unauthenticated failure path.
-Verify with a real session cookie before trusting the preview output in
-production; this is the one remaining gate before calling the pilot done,
-same "stop and diagnose" discipline as an unverified mobile milestone.
+### Round 1 — gallery-dl pilot (superseded as Instagram's live engine, kept as infrastructure)
+Built the full vertical slice bottom-up (domain -> DB -> infra -> app -> API
+-> UI) on gallery-dl as the second engine: `Collection`/`CollectionItem`/
+`ProfileItemPreview` domain models, `collections`/`collection_items` tables,
+session cookie storage (`core/session_store.py`, Netscape cookies.txt,
+never a password, never echoed back), `GalleryDlService` (profile discovery
+via `--resolve-json`, download via `-D`/`-f`), engine dispatch through
+`QueueService`/`YtDlpService`, `ProfileDiscoveryService`/`CollectionService`,
+the `/api/instagram/*` and `/api/collections*` routes, and
+`InstagramPanel.tsx` (session control, profile browser, playlists view).
+Verified live in a real browser end to end, including a real queued
+download job.
 
-Also still open, lower priority: gallery-dl under Termux is unverified
-(only the desktop pip-install spike ran); a preview call against an
-unauthenticated or slow-to-fail profile can take up to the 120s
-subprocess timeout before surfacing an error, which is a UX rough edge
-worth revisiting once real usage data exists.
+Two live findings on gallery-dl drove the round 2 swap below: an
+unauthenticated profile fetch returns a `NotFoundError` indistinguishable
+from "wrong username" (not a real 404), and — with an actual pasted session
+cookie — a real profile returned `AbortExtraction: HTTP redirect to home
+page`, which could mean a private/unfollowed profile *or* Instagram
+fingerprinting non-browser request traffic, with gallery-dl giving no way
+to tell which apart. Both are recorded in CLAUDE.md's "Important proven
+behavior".
+
+gallery-dl itself is **not removed** — `GalleryDlService` stays constructed
+and tested in `main.py`, just not routed to by anything live. Phase 5's own
+design reserves it as the generic engine for the *next* platform
+(Reddit/TikTok), so this isn't dead code, it's ahead-of-need infrastructure.
+
+### Round 2 — instaloader swap (this session, in response to explicit user request for date-range filtering)
+Requested mid-session: real date-range filtering for profile browsing, plus
+the home-page-redirect finding above made a purpose-built Instagram tool
+worth evaluating over a generic multi-site one. Spiked instaloader the same
+way gallery-dl was spiked (pip install + API inspection before committing),
+confirmed it gives typed exceptions (`ProfileNotExistsException`,
+`LoginRequiredException`, `PrivateProfileNotFollowedException`,
+`TooManyRequestsException`) instead of gallery-dl's ambiguous free text,
+`Post.date_utc` for real dates, and `context.test_login()` to verify a
+pasted session cookie immediately.
+
+Landed, each its own commit:
+- `instaloader` dependency (pyproject.toml/requirements.txt/termux-doctor.sh).
+- `DownloadEngine.INSTALOADER` (third engine value; docstring corrected --
+  instaloader runs in-process via `asyncio.to_thread`, not as a subprocess
+  like the other two).
+- `posted_at` on `CollectionItem`/`ProfileItemPreview`, migrated onto
+  `collection_items` (ALTER-TABLE-if-missing, since real local DBs from
+  testing this branch already existed without it).
+- `load_cookie_pairs()` in `session_store.py` — reads the same stored
+  Netscape file back as a plain dict for `instaloader.context.update_cookies()`,
+  one storage format shared with gallery-dl's file-path consumption.
+- `InstaloaderService` (`infrastructure/instaloader_service.py`) --
+  `list_profile_items()` with since/until early-stopping the
+  reverse-chronological feed (posts/reels only; stories/highlights aren't
+  meaningfully date-bounded), `download()` re-fetching a post fresh by
+  shortcode at download time (`Post.from_shortcode`) since collection items
+  are persisted and may be downloaded much later, `test_session()` wrapping
+  `test_login()`. Stories/highlights have no stable re-fetchable identifier
+  (Instagram expires stories, commonly ~24h) -- `download()` falls back to
+  a direct authenticated fetch of the exact media URL captured at preview
+  time for those, documented as a known limitation, not silently pretended
+  to be as durable as a permanent post.
+- `YtDlpService` dispatches `DownloadEngine.INSTALOADER` jobs to
+  `InstaloaderService`, same pattern as the `GALLERY_DL` branch.
+  `ProfileDiscoveryService`/`CollectionService`/`main.py` all now point at
+  `InstaloaderService` instead of `GalleryDlService` for Instagram.
+- API: `InstagramProfilePreviewRequest` gained `posted_after`/
+  `posted_before`; `ProfileItemPreviewResponse`/`CollectionItemResponse`
+  gained `posted_at`; `InstagramSessionStatusResponse` gained
+  `verified_username`, populated automatically right after `POST
+  .../session` saves and on demand via new `POST .../session/verify`,
+  both calling `test_login()` -- **live-verified against real Instagram
+  servers** with a fake cookie: got a real 401 rate-limit response back
+  from `instagram.com/graphql/query`, handled cleanly, returned
+  `verified_username: null` rather than crashing. This is the concrete
+  fix for the session confusion hit earlier in this session.
+
+### What's left (the ~30% this session stopped before)
+**UI only** — no more backend work needed for this round:
+- `apps/web/src/types/api.ts` / `api/client.ts`: add `posted_at` to
+  `ProfileItemPreview`/`CollectionItem`, `posted_after`/`posted_before` to
+  the preview request, `verified_username` to the session status type, and
+  a client method for `POST /api/instagram/session/verify`.
+- `InstagramPanel.tsx`: date-range inputs on the profile browser form
+  (wire into `previewInstagramProfile`'s new params); show `posted_at` on
+  preview/playlist item cards; show `verified_username` after saving a
+  session cookie (this directly replaces the old "did my cookie even work"
+  guessing from earlier in this session with a real answer).
+- Live-verify in a real browser afterward (Playwright + a fresh dev-server
+  pair, same pattern used earlier this session), then a final docs pass
+  marking the pilot fully done once a *real* signed-in preview has been
+  seen to return real items -- the one gate that has never been cleared in
+  either round, since no real login credentials were available during
+  either build.
+
+### Resuming this work
+On branch `feature/phase5-instagram-collections`, 20 commits ahead of
+`main` as of this pause, working tree clean. To continue in a fresh
+session, say: **"Continue the Instagram pilot UI wiring for date-range
+filtering and session verification -- see docs/docs_POCKETDL_ROADMAP.md's
+Phase 5 'What's left' list."** That list is the actual spec; nothing else
+needs re-deriving.
 
 ---
 

@@ -30,13 +30,16 @@ phase-by-phase status — the summary below is kept short and can lag it.
   docs/instagram-full-profile-plan.md and the roadmap's Phase 5 and
   "Product-polish priority plan" sections. Sequence this behind the two
   narrow Phase 2 remnants above, not behind mobile (already done).
-- Instagram pilot (Phase 5) is feature-complete end to end (domain, DB,
-  gallery-dl infra, application services, API, UI) on branch
-  `feature/phase5-instagram-collections`, verified live in a real browser
-  against the real backend. One gate before calling it done: a successful
-  authenticated profile preview has not been live-verified (only the
-  unauthenticated-failure path has real-world confirmation) — see the
-  roadmap's Phase 5 "Instagram pilot" section for the exact gap.
+- Instagram pilot (Phase 5) backend is feature-complete on branch
+  `feature/phase5-instagram-collections`, now on instaloader as the live
+  Instagram engine (swapped from gallery-dl mid-build for typed errors and
+  real date-range filtering; gallery-dl kept, unremoved, reserved for the
+  next Phase 5 platform). UI has not yet been updated for the new
+  date-range/session-verification fields — see the roadmap's Phase 5
+  "What's left" list, which is the actual spec for resuming this. One gate
+  neither engine round has cleared: a successful authenticated profile
+  preview has never been live-verified (no login credentials available
+  during either build) — see the roadmap's Phase 5 section.
 
 ## Current architecture
 ```text
