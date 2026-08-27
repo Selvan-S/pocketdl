@@ -283,7 +283,61 @@ Never silently export browser cookies.
 
 ---
 
-# Phase 5 — Download manager maturity
+# Phase 5 — Multi-platform extraction
+
+Builds on the two-engine (yt-dlp + gallery-dl) router already designed for
+Instagram — see
+[instagram-full-profile-plan.md](instagram-full-profile-plan.md). That plan
+is the pilot for this phase; once its router lands, adding a platform is
+"add a routing-table entry and verify engine coverage," not new
+architecture. Instagram is the first platform, not a special case.
+
+## Router design
+- `Platform` enum + a routing table mapping (platform, content type) →
+  engine (`YT_DLP` | `GALLERY_DL`), centralized in one module (e.g.
+  `application/platforms/router.py`) rather than branching per-service.
+- URL → platform detection by hostname pattern lives in the router only —
+  no duplicate hostname checks across API/application/infrastructure layers.
+- `Collection`/`CollectionItem` (the playlist concept from the Instagram
+  plan) is platform-agnostic from the start via a `platform` field, so the
+  same save-a-selection-then-download-it flow works for every platform
+  instead of rebuilding it per site.
+
+## Candidate platforms and engine
+
+| Platform | Recommended engine | Notes |
+|---|---|---|
+| YouTube | yt-dlp | already working today |
+| TikTok | yt-dlp | public videos; no profile/story concept to mirror Instagram's |
+| Reddit | gallery-dl (images/galleries) + yt-dlp (`v.redd.it` video) | one platform, two engines depending on content type |
+| Twitter/X | yt-dlp (video) + gallery-dl (images/threads) | most content now sits behind a login wall; expect frequent breakage, budget for it |
+| Facebook | yt-dlp | public videos/reels only — profile-wide scraping is high ToS-risk, not recommended |
+| Pinterest | gallery-dl | boards/pins |
+| Tumblr | gallery-dl | |
+| Vimeo | yt-dlp | only videos the user can already access (public or password known to them) |
+| Twitch | yt-dlp | VODs/clips only — never live streams or paid/subscriber-only content |
+| SoundCloud | yt-dlp | audio |
+
+## Explicit non-goals
+- No DRM'd streaming services (Netflix, Disney+, Spotify, Prime Video, etc.)
+  — hard boundary, already stated in this doc's non-goals and in CLAUDE.md.
+- No mass/bulk account scraping. This stays a personal downloader for
+  content the user already has legitimate access to, not scraping-as-a-service.
+- Facebook and X full-profile scraping stays out of scope given ToS
+  hostility and login-wall coverage — single post/video only, until proven
+  otherwise on a case-by-case basis.
+
+## Sequencing
+Validate the router against a second, mostly-open platform (Reddit or
+TikTok) right after Instagram, before assuming it generalizes cleanly to
+the harder, login-walled ones (X, Facebook). Each new platform still needs
+its own small discovery spike (does gallery-dl/yt-dlp actually cover the
+content types we want, under Termux) before committing to full layer-by-layer
+implementation, same as the Instagram plan's gallery-dl-on-Termux spike.
+
+---
+
+# Phase 6 — Download manager maturity
 
 Features to consider:
 - real-time progress via WebSocket/SSE instead of polling.
@@ -302,7 +356,7 @@ Features to consider:
 
 ---
 
-# Phase 6 — Mobile productization
+# Phase 7 — Mobile productization
 
 - Termux startup service.
 - Android share target.
@@ -318,7 +372,7 @@ Potential native shell options can be evaluated later. Do not introduce Flutter/
 
 ---
 
-# Phase 7 — Reliability and security
+# Phase 8 — Reliability and security
 
 - Threat model for localhost APIs.
 - Strict origin checks.
@@ -336,7 +390,7 @@ Potential native shell options can be evaluated later. Do not introduce Flutter/
 
 ---
 
-# Phase 8 — v1.0
+# Phase 9 — v1.0
 
 Release criteria:
 - Desktop stable.
@@ -376,6 +430,63 @@ These are ideas, not commitments:
 - Android share-sheet integration.
 - Browser extension context menu: "Send to PocketDL".
 - Local network control (disabled by default; explicit opt-in with authentication).
+
+---
+
+# Product-polish priority plan
+
+The "make it easy for the user, full-fledged product" ask is mostly already
+captured across Phase 6 (download manager maturity), Phase 7 (mobile
+productization) and the future idea backlog above. This section prioritizes
+those into tiers and adds a few items not previously listed, so the backlog
+isn't just an unordered wishlist.
+
+## Near-term (right after the Phase 5 pilot platform lands)
+- Android share target + browser extension "Send to PocketDL" context menu
+  (Phase 7 backlog) — the single biggest mobile usability win, and it's a
+  PWA manifest feature (`share_target`), not a native app.
+- Notification on download/collection completion (Phase 7 backlog).
+- Batch URL input — paste N URLs, one per line, queue all at once. Not
+  previously listed; pairs naturally with the Phase 5 collection/playlist
+  work (add several profile items, or several plain URLs, in one action).
+- Failed-download retry + partial-file resume (Phase 6) — yt-dlp already
+  supports `--continue`; today a failed job means a full re-download.
+- WebSocket/SSE progress instead of polling (Phase 6) — lower battery/CPU
+  cost on Termux matters more than on desktop.
+
+## Medium-term
+- Storage/disk-usage dashboard with a per-platform breakdown and cleanup
+  suggestions. Not previously listed — becomes more important once
+  multi-platform full-profile downloads (Phase 5) can fill phone storage
+  quickly.
+- Wi-Fi-only download gating. Not previously listed — guards mobile data
+  usage; checkable client-side via the Network Information API before a
+  job is submitted, no backend change needed.
+- Import/export settings and history (Phase 6 backlog) — cheap insurance
+  before a phone reset or reinstall.
+- Saved per-platform download presets (Phase 6 backlog) — e.g. "Instagram
+  Reel -> best MP4" as one tap instead of reselecting quality every time.
+- Rate-limit-aware retry messaging — surface "rate limited by <platform>,
+  retrying in Xm" instead of an opaque failure. Grows more important as
+  Phase 5 adds platforms that rate-limit harder than YouTube does.
+
+## Later, needs its own security pass first
+- Local network access beyond localhost (backlog item; this doc's
+  non-goals already require it disabled by default with explicit opt-in +
+  authentication) — needed for a "queue from my laptop, download happens
+  on the phone" workflow, but land it after Phase 8 (reliability and
+  security), not before.
+- Watch-folder automation, download scheduling, bandwidth limits (backlog).
+
+## New, not previously listed
+- First-run setup wizard: pick the download directory, confirm storage
+  permission, walk through installing the capture extension. Reduces the
+  "why isn't this working" support burden for a self-hosted tool where
+  there's no one else to ask.
+- Update-available banner extending the existing yt-dlp version-check
+  mechanism (`YtDlpService.versions` / `update_yt_dlp`) to gallery-dl once
+  it ships, so both engines share one update path instead of yt-dlp being
+  the only one that's easy to keep current.
 
 ---
 

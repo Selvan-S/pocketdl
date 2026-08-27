@@ -6,6 +6,8 @@ You are continuing development of PocketDL, a local/self-hosted downloader built
 Treat this as a real software project. Maintainable architecture, tests, migrations, type safety, observability, and backwards compatibility matter more than quickly adding features.
 
 ## Current state
+See docs/docs_POCKETDL_ROADMAP.md for the authoritative, actively-maintained
+phase-by-phase status — the summary below is kept short and can lag it.
 - Current desktop milestone: v0.2.2 core workflow is working.
 - Browser capture works for HLS/direct-media sources.
 - Captured downloads work.
@@ -13,10 +15,21 @@ Treat this as a real software project. Maintainable architecture, tests, migrati
 - UI-configurable download location works.
 - Collapsible capture sections/cards work.
 - Duration metadata is generally accurate.
-- Capture duplicates still exist in some cases.
-- Captured media size is not yet reliable.
-- Mobile/Termux deployment is the current active workstream.
-- Do not start v0.3 feature work until the mobile baseline is working, unless explicitly requested.
+- Mobile/Termux deployment is done — M1-M6 all verified on-device (Termux
+  runtime, backend, PWA, standard download, browser capture, Termux:Boot
+  background service).
+- Capture duplicates mostly fixed (signed-token normalization + HLS
+  master/variant grouping); multi-CDN/hostname-rotation duplicates still
+  open.
+- Captured media size is partially reliable: direct-media Content-Length is
+  trusted, and HLS/DASH variants get a labeled bandwidth x duration
+  estimate; exact size for HLS with no declared bandwidth is still open.
+- Format/quality selection (Phase 3) is done.
+- Multi-platform extraction (beyond Instagram/yt-dlp) and broader product
+  enhancements are active work per explicit request — see
+  docs/instagram-full-profile-plan.md and the roadmap's Phase 5 and
+  "Product-polish priority plan" sections. Sequence this behind the two
+  narrow Phase 2 remnants above, not behind mobile (already done).
 
 ## Current architecture
 ```text
@@ -71,18 +84,21 @@ A difficult HLS site was experimentally verified as follows:
 Therefore, do NOT waste time endlessly adding random yt-dlp headers or impersonation targets. Browser capture is the intended solution for this class of source.
 
 ## Current known bugs / backlog
-1. Duplicate captured cards still appear for some sites.
-   - Signed URLs change between requests.
-   - Some players issue multiple logically equivalent requests.
-   - Normalization/deduplication is not yet perfect.
-2. Captured media size is unreliable.
-   - Duration is generally accurate.
-   - Exact size is not always knowable before downloading, especially for HLS/DASH.
-3. Very short/wrong captures can occur.
-   - Example: a legitimate-looking media request may represent ~2 seconds and a few KB.
-   - The UI should help users identify suspicious captures.
-4. Browser/mobile extension compatibility is not yet proven on Android.
-5. Background service / Termux:Boot is not yet implemented.
+1. Duplicate captured cards — mostly fixed (signed-token normalization,
+   HLS master/variant grouping). Still open: multi-CDN/hostname-rotation
+   duplicates for the same content.
+2. Captured media size — partially fixed. Direct-media Content-Length is
+   trusted; HLS/DASH variants get a labeled bandwidth x duration estimate.
+   Still open: exact size when a playlist declares no bandwidth and ffprobe
+   can't determine one; codecs/bitrate for non-master-playlist captures.
+3. Very short/wrong captures — mostly done. `is_suspicious_capture` flags
+   (not deletes) captures below a duration/size threshold, surfaced in both
+   the PWA and extension. Still open: MIME/content-type signal, configurable
+   thresholds.
+4. Browser/mobile extension compatibility on Android — verified (M5, real
+   device, Quetta browser).
+5. Background service / Termux:Boot — implemented and verified (M6, real
+   reboot).
 
 ## Mobile objective
 Android runtime:
@@ -168,5 +184,13 @@ For a major feature:
 For small bugs, prefer a minimal patch with a regression test.
 
 ## Immediate priority
-The immediate priority is Android/Termux deployment and testing, not v0.3 format analysis.
-After Android works end-to-end, return to the known duplicate-capture and media-size issues, then move to richer format/quality analysis.
+Android/Termux deployment (M1-M6) and format/quality analysis (Phase 3) are
+both done. Immediate priority is now, per explicit request:
+1. Multi-platform extraction beyond Instagram (docs/docs_POCKETDL_ROADMAP.md
+   Phase 5) and the product-polish enhancement plan in the same doc.
+2. Keep that sequenced behind the two narrow Phase 2 remnants above
+   (multi-CDN capture dedup, HLS size-estimate edge case) if they resurface
+   as real user-reported bugs — they are not blocking, just unfinished.
+Do not treat this section as license to restart the original v0.3
+"format/quality analysis" scope — that specific phase is done; new feature
+work should map to a phase in docs/docs_POCKETDL_ROADMAP.md.
