@@ -446,6 +446,30 @@ Features to consider:
 
 Potential native shell options can be evaluated later. Do not introduce Flutter/React Native/Kotlin unless the PWA + Termux architecture proves insufficient.
 
+## Planned: split the single-page UI into routed pages with a bottom nav
+Not started. Raised 2026-08-27 while testing the Instagram pilot on a phone
+screen: `App.tsx` is one long scroll (paste-URL, browser capture,
+Instagram, downloads, settings) that keeps growing with every feature —
+already a real usability problem on mobile, and will only get worse as
+Phase 5 adds more platforms and Phase 6 adds more download-manager UI.
+
+Plan:
+- Bottom tab bar (mobile-standard pattern): Home (paste-URL + downloads),
+  Capture, Instagram/Platforms, Settings, or similar grouping — exact tab
+  split TBD.
+- `react-router-dom` is already an installed dependency
+  (`apps/web/package.json`) and currently completely unused — this is
+  what it's for.
+- Main design question to resolve when this is picked up: `App.tsx`'s 2s
+  polling refresh (`refresh()` in the `useEffect`) currently drives
+  downloads/captures/settings/system-status from one place. Splitting
+  into routes means deciding what each page polls for itself vs. what
+  stays lifted to a shared layout (the connection pill in the topbar
+  needs system status regardless of which page is active).
+- Scope as its own branch/session, same bottom-up-but-UI-only shape as
+  other UI work here: doesn't need new backend endpoints, this is a
+  frontend-only restructuring.
+
 ---
 
 # Phase 8 — Reliability and security
