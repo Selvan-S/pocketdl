@@ -158,6 +158,7 @@ function ProfileBrowser({
   const [targetCollectionId, setTargetCollectionId] = useState('');
   const [newCollectionName, setNewCollectionName] = useState('');
   const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function toggleType(type: InstagramContentType) {
     setSelectedTypes((current) => (current.includes(type) ? current.filter((value) => value !== type) : [...current, type]));
@@ -176,14 +177,19 @@ function ProfileBrowser({
     const url = profileUrl.trim();
     if (!url || selectedTypes.length === 0) return;
     setLoading(true);
+    setError(null);
     setItems([]);
     setSelected(new Set());
     try {
       const result = await api.previewInstagramProfile({ profile_url: url, content_types: selectedTypes });
       setItems(result.items);
       if (result.items.length === 0) onMessage('No items found for the selected content types.');
-    } catch (error) {
-      onMessage(error instanceof Error ? error.message : 'Unable to preview this profile.');
+    } catch (caughtError) {
+      // Also shown inline (not just via onMessage) since the shared message
+      // banner lives at the top of the page, far from this form.
+      const text = caughtError instanceof Error ? caughtError.message : 'Unable to preview this profile.';
+      setError(text);
+      onMessage(text);
     } finally {
       setLoading(false);
     }
@@ -193,12 +199,13 @@ function ProfileBrowser({
     const chosen = items.filter((item) => selected.has(item.source_url));
     if (chosen.length === 0) return;
     setAdding(true);
+    setError(null);
     try {
       let collectionId = targetCollectionId;
       if (!collectionId) {
         const name = newCollectionName.trim();
         if (!name) {
-          onMessage('Choose an existing playlist or name a new one first.');
+          setError('Choose an existing playlist or name a new one first.');
           return;
         }
         const created = await api.createCollection(name);
@@ -212,8 +219,10 @@ function ProfileBrowser({
       setSelected(new Set());
       onMessage(`Added ${chosen.length} item(s) to the playlist.`);
       await onCollectionsChanged();
-    } catch (error) {
-      onMessage(error instanceof Error ? error.message : 'Unable to add items to the playlist.');
+    } catch (caughtError) {
+      const text = caughtError instanceof Error ? caughtError.message : 'Unable to add items to the playlist.';
+      setError(text);
+      onMessage(text);
     } finally {
       setAdding(false);
     }
@@ -241,6 +250,7 @@ function ProfileBrowser({
         <button disabled={loading || !profileUrl.trim() || selectedTypes.length === 0} onClick={() => void preview()}>
           {loading ? 'Loading…' : 'Preview profile'}
         </button>
+        {error && <div className="error">{error}</div>}
       </div>
 
       {items.length > 0 && (
@@ -339,6 +349,7 @@ function PlaylistCard({
   const [items, setItems] = useState<CollectionItem[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadItems() {
     setItems(await api.listCollectionItems(collection.id));
@@ -355,14 +366,19 @@ function PlaylistCard({
 
   async function downloadItems(itemIds?: string[]) {
     setBusy(true);
+    setError(null);
     try {
       const jobs = await api.downloadCollection(collection.id, itemIds ? { item_ids: itemIds } : {});
       onMessage(jobs.length > 0 ? `Queued ${jobs.length} download(s).` : 'Nothing new to download in this playlist.');
       await onDownloadQueued();
       setItems(await api.listCollectionItems(collection.id));
       setSelected(new Set());
-    } catch (error) {
-      onMessage(error instanceof Error ? error.message : 'Unable to queue downloads.');
+    } catch (caughtError) {
+      // Also shown inline (not just via onMessage) since the shared message
+      // banner lives at the top of the page, far from this card.
+      const text = caughtError instanceof Error ? caughtError.message : 'Unable to queue downloads.';
+      setError(text);
+      onMessage(text);
     } finally {
       setBusy(false);
     }
@@ -404,6 +420,7 @@ function PlaylistCard({
             Delete playlist
           </button>
         </div>
+        {error && <div className="error">{error}</div>}
         {items === null ? (
           <div className="hint">Loading…</div>
         ) : items.length === 0 ? (

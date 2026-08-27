@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
 
 from .schemas import (
@@ -36,6 +38,7 @@ from ..domain.collections import Collection, CollectionItem, InstagramAuthRequir
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
 from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api')
 
 
@@ -410,10 +413,15 @@ async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, req
     try:
         items = await service.preview(payload.profile_url, [InstagramContentType(value) for value in payload.content_types])
     except InstagramAuthRequiredError as exc:
+        logger.info('Instagram profile preview requires a session: %s (%s)', payload.profile_url, exc)
         raise HTTPException(status_code=401, detail=f'Instagram session required: {exc}') from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
+        # Not a client mistake (bad URL/input already 422'd above) -- an
+        # actual gallery-dl failure the response body alone won't leave a
+        # durable trace of, so it's worth a real server-side log line.
+        logger.warning('Instagram profile preview failed: %s (%s)', payload.profile_url, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return InstagramProfilePreviewResponse(items=[
         ProfileItemPreviewResponse(
