@@ -24,6 +24,15 @@ class DownloadSourceType(StrEnum):
     CAPTURED = 'captured'
 
 
+class DownloadEngine(StrEnum):
+    """Which subprocess runs the job. Orthogonal to DownloadSourceType:
+    source_type is about how the URL was obtained (a pasted page/direct URL
+    vs. a browser capture), engine is about which tool downloads it."""
+
+    YT_DLP = 'yt_dlp'
+    GALLERY_DL = 'gallery_dl'
+
+
 @dataclass(slots=True)
 class RequestContext:
     page_url: str | None = None
@@ -61,3 +70,4 @@ class DownloadJob:
     started_at: datetime | None
     finished_at: datetime | None
     capture_id: str | None = None
+    engine: DownloadEngine = DownloadEngine.YT_DLP
