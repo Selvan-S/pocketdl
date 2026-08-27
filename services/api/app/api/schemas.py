@@ -247,6 +247,10 @@ class InstagramProfilePreviewRequest(BaseModel):
     content_types: list[Literal['post', 'carousel', 'reel', 'story', 'highlight']] = Field(
         default_factory=lambda: ['post', 'reel', 'story', 'highlight'],
     )
+    # Only applied to posts/reels -- stories/highlights aren't meaningfully
+    # date-bounded browsing, see InstaloaderService._collect_posts.
+    posted_after: datetime | None = None
+    posted_before: datetime | None = None
 
     @field_validator('profile_url')
     @classmethod
@@ -271,6 +275,7 @@ class ProfileItemPreviewResponse(BaseModel):
     caption: str | None
     thumbnail_url: str | None
     external_id: str | None
+    posted_at: datetime | None = None
 
 
 class InstagramProfilePreviewResponse(BaseModel):
@@ -287,6 +292,9 @@ class InstagramSessionRequest(BaseModel):
 
 class InstagramSessionStatusResponse(BaseModel):
     configured: bool
+    # Set only right after a successful save, or by the explicit verify
+    # endpoint -- a real call to Instagram, not made on every status poll.
+    verified_username: str | None = None
 
 
 class CollectionCreateRequest(BaseModel):
@@ -314,6 +322,7 @@ class CollectionItemAddRequest(BaseModel):
     caption: str | None = Field(default=None, max_length=5000)
     thumbnail_url: str | None = Field(default=None, max_length=2000)
     external_id: str | None = Field(default=None, max_length=200)
+    posted_at: datetime | None = None
 
     @field_validator('source_url')
     @classmethod
@@ -334,6 +343,7 @@ class CollectionItemResponse(BaseModel):
     thumbnail_url: str | None
     external_id: str | None
     added_at: datetime
+    posted_at: datetime | None
     downloaded_job_id: str | None
 
 

@@ -60,6 +60,7 @@ class CollectionService:
             thumbnail_url=preview.thumbnail_url,
             external_id=preview.external_id,
             added_at=datetime.now(timezone.utc),
+            posted_at=preview.posted_at,
         )
         return await self.repository.add_item(item)
 

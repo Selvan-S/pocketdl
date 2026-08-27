@@ -161,6 +161,7 @@ def collection_item_response(item: CollectionItem) -> CollectionItemResponse:
         thumbnail_url=item.thumbnail_url,
         external_id=item.external_id,
         added_at=item.added_at,
+        posted_at=item.posted_at,
         downloaded_job_id=item.downloaded_job_id,
     )
 
@@ -427,7 +428,12 @@ async def update_yt_dlp(request: Request) -> dict[str, object]:
 async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, request: Request) -> InstagramProfilePreviewResponse:
     service = request.app.state.profile_discovery_service
     try:
-        items = await service.preview(payload.profile_url, [InstagramContentType(value) for value in payload.content_types])
+        items = await service.preview(
+            payload.profile_url,
+            [InstagramContentType(value) for value in payload.content_types],
+            payload.posted_after,
+            payload.posted_before,
+        )
     except InstagramAuthRequiredError as exc:
         logger.info('Instagram profile preview requires a session: %s (%s)', payload.profile_url, exc)
         raise HTTPException(status_code=401, detail=f'Instagram session required: {exc}') from exc
@@ -435,7 +441,7 @@ async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, req
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         # Not a client mistake (bad URL/input already 422'd above) -- an
-        # actual gallery-dl failure the response body alone won't leave a
+        # actual instaloader failure the response body alone won't leave a
         # durable trace of, so it's worth a real server-side log line.
         logger.warning('Instagram profile preview failed: %s (%s)', payload.profile_url, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -443,6 +449,7 @@ async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, req
         ProfileItemPreviewResponse(
             source_url=item.source_url, content_type=item.content_type, author_username=item.author_username,
             caption=item.caption, thumbnail_url=item.thumbnail_url, external_id=item.external_id,
+            posted_at=item.posted_at,
         )
         for item in items
     ])
@@ -451,6 +458,9 @@ async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, req
 @router.get('/instagram/session', response_model=InstagramSessionStatusResponse)
 async def get_instagram_session_status(request: Request) -> InstagramSessionStatusResponse:
     settings = request.app.state.settings
+    # Deliberately does not call verify_session() here -- this is polled by
+    # the UI like any other settings fetch, and verification is a real
+    # network call to Instagram; see POST .../session and .../verify below.
     return InstagramSessionStatusResponse(configured=has_session_cookie(settings.database_path, 'instagram'))
 
 
@@ -461,7 +471,29 @@ async def set_instagram_session(payload: InstagramSessionRequest, request: Reque
         save_session_cookie(settings.database_path, 'instagram', '.instagram.com', payload.cookie_header)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return InstagramSessionStatusResponse(configured=True)
+
+    verified_username = await _verify_instagram_session(request)
+    return InstagramSessionStatusResponse(configured=True, verified_username=verified_username)
+
+
+@router.post('/instagram/session/verify', response_model=InstagramSessionStatusResponse)
+async def verify_instagram_session(request: Request) -> InstagramSessionStatusResponse:
+    settings = request.app.state.settings
+    configured = has_session_cookie(settings.database_path, 'instagram')
+    verified_username = await _verify_instagram_session(request) if configured else None
+    return InstagramSessionStatusResponse(configured=configured, verified_username=verified_username)
+
+
+async def _verify_instagram_session(request: Request) -> str | None:
+    """Best-effort: a real call to Instagram, so a network hiccup here
+    should not fail the surrounding save/status request -- it just means
+    the caller doesn't get a verified username this time."""
+    service = request.app.state.profile_discovery_service
+    try:
+        return await service.verify_session()
+    except Exception as exc:
+        logger.info('Instagram session verification failed: %s', exc)
+        return None
 
 
 @router.delete('/instagram/session')
@@ -540,6 +572,7 @@ async def add_collection_item(collection_id: str, payload: CollectionItemAddRequ
         caption=payload.caption,
         thumbnail_url=payload.thumbnail_url,
         external_id=payload.external_id,
+        posted_at=payload.posted_at,
     )
     try:
         item = await service.add_item(collection_id, preview)
