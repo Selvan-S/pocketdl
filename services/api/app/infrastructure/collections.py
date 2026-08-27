@@ -33,11 +33,24 @@ class SqliteCollectionRepository(CollectionRepository):
                     thumbnail_url TEXT,
                     external_id TEXT,
                     added_at TEXT NOT NULL,
+                    posted_at TEXT,
                     downloaded_job_id TEXT
                 )'''
             )
             await db.execute('CREATE INDEX IF NOT EXISTS idx_collection_items_collection ON collection_items (collection_id)')
+            await self._ensure_columns(db)
             await db.commit()
+
+    @staticmethod
+    async def _ensure_columns(db: aiosqlite.Connection) -> None:
+        cursor = await db.execute('PRAGMA table_info(collection_items)')
+        columns = {row[1] for row in await cursor.fetchall()}
+        migrations = {
+            'posted_at': 'ALTER TABLE collection_items ADD COLUMN posted_at TEXT',
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                await db.execute(statement)
 
     @staticmethod
     def _row_to_collection(row: aiosqlite.Row) -> Collection:
@@ -61,6 +74,7 @@ class SqliteCollectionRepository(CollectionRepository):
             thumbnail_url=row['thumbnail_url'],
             external_id=row['external_id'],
             added_at=datetime.fromisoformat(row['added_at']),
+            posted_at=datetime.fromisoformat(row['posted_at']) if row['posted_at'] else None,
             downloaded_job_id=row['downloaded_job_id'],
         )
 
@@ -108,11 +122,12 @@ class SqliteCollectionRepository(CollectionRepository):
             await db.execute(
                 '''INSERT INTO collection_items (
                     id, collection_id, source_url, content_type, author_username, caption,
-                    thumbnail_url, external_id, added_at, downloaded_job_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    thumbnail_url, external_id, added_at, posted_at, downloaded_job_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                 (
                     item.id, item.collection_id, item.source_url, item.content_type, item.author_username,
-                    item.caption, item.thumbnail_url, item.external_id, item.added_at.isoformat(), item.downloaded_job_id,
+                    item.caption, item.thumbnail_url, item.external_id, item.added_at.isoformat(),
+                    item.posted_at.isoformat() if item.posted_at else None, item.downloaded_job_id,
                 ),
             )
             await db.execute('UPDATE collections SET updated_at = ? WHERE id = ?', (item.added_at.isoformat(), item.collection_id))

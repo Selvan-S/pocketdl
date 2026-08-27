@@ -51,3 +51,32 @@ def test_download_job_accepts_gallery_dl_engine() -> None:
         engine=DownloadEngine.GALLERY_DL,
     )
     assert job.engine is DownloadEngine.GALLERY_DL
+
+
+def test_download_job_accepts_instaloader_engine() -> None:
+    job = DownloadJob(
+        id='test', url='https://instagram.com/p/abc123/', filename=None, title=None, status=DownloadStatus.QUEUED,
+        progress=0.0, downloaded_bytes=0, total_bytes=None, speed_bytes=None, eta_seconds=None,
+        output_path=None, error=None, error_details=None, error_category=None, exit_code=None,
+        retry_count=0, impersonation=ImpersonationMode.NONE, referer=None, origin=None, user_agent=None,
+        source_type=DownloadSourceType.STANDARD, created_at=_now(), started_at=None, finished_at=None,
+        engine=DownloadEngine.INSTALOADER,
+    )
+    assert job.engine is DownloadEngine.INSTALOADER
+
+
+def test_collection_item_accepts_posted_at() -> None:
+    posted = datetime(2026, 3, 15, tzinfo=timezone.utc)
+    item = CollectionItem(
+        id='i1',
+        collection_id='c1',
+        source_url='https://instagram.com/p/abc123/',
+        content_type=InstagramContentType.REEL.value,
+        author_username='someone',
+        caption=None,
+        thumbnail_url=None,
+        external_id='abc123',
+        added_at=_now(),
+        posted_at=posted,
+    )
+    assert item.posted_at == posted

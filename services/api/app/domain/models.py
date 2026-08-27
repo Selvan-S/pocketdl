@@ -25,12 +25,15 @@ class DownloadSourceType(StrEnum):
 
 
 class DownloadEngine(StrEnum):
-    """Which subprocess runs the job. Orthogonal to DownloadSourceType:
-    source_type is about how the URL was obtained (a pasted page/direct URL
-    vs. a browser capture), engine is about which tool downloads it."""
+    """Which tool runs the job -- a subprocess for YT_DLP/GALLERY_DL, an
+    in-process library call for INSTALOADER. Orthogonal to
+    DownloadSourceType: source_type is about how the URL was obtained (a
+    pasted page/direct URL vs. a browser capture), engine is about which
+    tool downloads it."""
 
     YT_DLP = 'yt_dlp'
     GALLERY_DL = 'gallery_dl'
+    INSTALOADER = 'instaloader'
 
 
 @dataclass(slots=True)

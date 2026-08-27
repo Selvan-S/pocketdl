@@ -26,8 +26,8 @@ class InstagramContentType(StrEnum):
 class InstagramAuthRequiredError(RuntimeError):
     """Raised when a profile fetch could not complete in a way that, in
     current practice, means the profile needs an authenticated session
-    cookie -- see GalleryDlService.list_profile_items and CLAUDE.md's
-    "Important proven behavior" entry for how this was verified."""
+    cookie -- see InstaloaderService.list_profile_items and CLAUDE.md's
+    "Important proven behavior" entries for how this was verified."""
 
 
 @dataclass(slots=True)
@@ -62,6 +62,7 @@ class CollectionItem:
     thumbnail_url: str | None
     external_id: str | None
     added_at: datetime
+    posted_at: datetime | None = None
     downloaded_job_id: str | None = None
 
 
@@ -78,3 +79,4 @@ class ProfileItemPreview:
     caption: str | None
     thumbnail_url: str | None
     external_id: str | None
+    posted_at: datetime | None = None
