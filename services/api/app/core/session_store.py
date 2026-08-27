@@ -100,6 +100,32 @@ def has_session_cookie(database_path: Path, platform: str) -> bool:
     return session_cookie_file(database_path, platform).exists()
 
 
+def load_cookie_pairs(database_path: Path, platform: str) -> dict[str, str]:
+    """Read the stored Netscape cookies.txt back into a plain name->value
+    dict, for an engine that wants to inject cookies directly into its own
+    HTTP session (e.g. instaloader's ``context.update_cookies``) rather
+    than reading a file path (gallery-dl's ``--cookies FILE``). One storage
+    format, two readers -- returns {} rather than raising when nothing is
+    configured, since "no session" is an ordinary, expected state here.
+    """
+    path = session_cookie_file(database_path, platform)
+    if not path.exists():
+        return {}
+    try:
+        content = path.read_text(encoding='utf-8')
+    except OSError:
+        return {}
+
+    pairs: dict[str, str] = {}
+    for line in content.splitlines():
+        if line.startswith('#') or not line.strip():
+            continue
+        fields = line.split('\t')
+        if len(fields) >= 7:
+            pairs[fields[5]] = fields[6]
+    return pairs
+
+
 def clear_session_cookie(database_path: Path, platform: str) -> None:
     try:
         session_cookie_file(database_path, platform).unlink()

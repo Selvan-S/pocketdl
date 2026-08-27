@@ -6,6 +6,7 @@ import pytest
 from app.core.session_store import (
     clear_session_cookie,
     has_session_cookie,
+    load_cookie_pairs,
     save_session_cookie,
     scrub_cookie_values,
     session_cookie_file,
@@ -102,3 +103,18 @@ def test_scrub_cookie_values_is_a_noop_when_no_cookie_is_stored(tmp_path: Path) 
     output = 'some unrelated error output'
 
     assert scrub_cookie_values(output, database, 'instagram') == output
+
+
+def test_load_cookie_pairs_reads_back_a_saved_cookie(tmp_path: Path) -> None:
+    database = tmp_path / 'pocketdl.db'
+    save_session_cookie(database, 'instagram', '.instagram.com', 'sessionid=abc123; csrftoken=def456')
+
+    pairs = load_cookie_pairs(database, 'instagram')
+
+    assert pairs == {'sessionid': 'abc123', 'csrftoken': 'def456'}
+
+
+def test_load_cookie_pairs_is_empty_when_nothing_is_stored(tmp_path: Path) -> None:
+    database = tmp_path / 'pocketdl.db'
+
+    assert load_cookie_pairs(database, 'instagram') == {}
