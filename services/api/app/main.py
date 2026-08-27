@@ -12,7 +12,9 @@ from .core.logging import configure_logging
 from .application.downloads.service import QueueService
 from .application.captures.service import CaptureService
 from .infrastructure.captures import SqliteCaptureRepository
+from .infrastructure.collections import SqliteCollectionRepository
 from .infrastructure.ffmpeg import CapturedMediaService
+from .infrastructure.gallery_dl import GalleryDlService
 from .infrastructure.manifest_fetch import ManifestFetcher
 from .infrastructure.media_probe import MediaProbeService
 from .infrastructure.sqlite import SqliteDownloadRepository
@@ -29,18 +31,23 @@ async def lifespan(app: FastAPI):
     await repository.initialize()
     capture_repository = SqliteCaptureRepository(settings.database_path)
     await capture_repository.initialize()
+    collection_repository = SqliteCollectionRepository(settings.database_path)
+    await collection_repository.initialize()
     media_probe = MediaProbeService()
     manifest_fetcher = ManifestFetcher()
     capture_service = CaptureService(capture_repository, media_probe, manifest_fetcher)
     captured_media = CapturedMediaService(settings.download_directory)
-    downloader = YtDlpService(settings, captured_media)
-    queue = QueueService(repository, downloader, settings.max_concurrent_downloads, capture_repository)
+    gallery_dl = GalleryDlService(settings, collection_repository)
+    downloader = YtDlpService(settings, captured_media, gallery_dl)
+    queue = QueueService(repository, downloader, settings.max_concurrent_downloads, capture_repository, collection_repository)
     app.state.settings = settings
     app.state.default_download_directory = default_download_directory
     app.state.repository = repository
     app.state.capture_repository = capture_repository
     app.state.capture_service = capture_service
     app.state.captured_media = captured_media
+    app.state.collection_repository = collection_repository
+    app.state.gallery_dl = gallery_dl
     app.state.downloader = downloader
     app.state.queue = queue
     yield

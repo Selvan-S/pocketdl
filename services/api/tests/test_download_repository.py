@@ -74,6 +74,20 @@ async def test_engine_defaults_to_yt_dlp_when_unset(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_collection_item_id_round_trips_through_add_and_get(tmp_path) -> None:
+    repository = SqliteDownloadRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    job = build_job('job-1', DownloadEngine.GALLERY_DL)
+    job.collection_item_id = 'item-1'
+
+    await repository.add(job)
+
+    fetched = await repository.get('job-1')
+    assert fetched is not None
+    assert fetched.collection_item_id == 'item-1'
+
+
+@pytest.mark.asyncio
 async def test_initialize_migrates_a_pre_engine_database_and_is_idempotent(tmp_path) -> None:
     database = tmp_path / 'pocketdl.db'
     with sqlite3.connect(database) as db:
@@ -96,3 +110,4 @@ async def test_initialize_migrates_a_pre_engine_database_and_is_idempotent(tmp_p
     legacy = await repository.get('legacy-1')
     assert legacy is not None
     assert legacy.engine is DownloadEngine.YT_DLP
+    assert legacy.collection_item_id is None

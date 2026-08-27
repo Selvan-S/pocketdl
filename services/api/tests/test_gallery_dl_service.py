@@ -1,19 +1,33 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from app.core.session_store import save_session_cookie
 from app.domain.collections import InstagramContentType
+from app.domain.models import DownloadJob, DownloadSourceType, DownloadStatus, ImpersonationMode
 from app.infrastructure.gallery_dl import GalleryDlService, InstagramAuthRequiredError
 
 
 class _StubSettings:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path, download_directory: Path) -> None:
         self.database_path = database_path
+        self.download_directory = download_directory
 
 
 def _make_service(tmp_path: Path) -> GalleryDlService:
-    return GalleryDlService(_StubSettings(tmp_path / 'pocketdl.db'))  # type: ignore[arg-type]
+    return GalleryDlService(_StubSettings(tmp_path / 'pocketdl.db', tmp_path / 'downloads'))  # type: ignore[arg-type]
+
+
+def _make_job(job_id: str = 'job-1', filename: str | None = None, title: str | None = None) -> DownloadJob:
+    now = datetime.now(timezone.utc)
+    return DownloadJob(
+        id=job_id, url='https://www.instagram.com/p/abc123/', filename=filename, title=title,
+        status=DownloadStatus.QUEUED, progress=0.0, downloaded_bytes=0, total_bytes=None, speed_bytes=None,
+        eta_seconds=None, output_path=None, error=None, error_details=None, error_category=None, exit_code=None,
+        retry_count=0, impersonation=ImpersonationMode.NONE, referer=None, origin=None, user_agent=None,
+        source_type=DownloadSourceType.STANDARD, created_at=now, started_at=None, finished_at=None,
+    )
 
 
 def test_content_type_url_uses_verified_gallery_dl_url_patterns(tmp_path: Path) -> None:
@@ -41,7 +55,7 @@ def test_cookie_args_empty_when_no_session_configured(tmp_path: Path) -> None:
 def test_cookie_args_points_at_the_stored_cookie_file(tmp_path: Path) -> None:
     database = tmp_path / 'pocketdl.db'
     save_session_cookie(database, 'instagram', '.instagram.com', 'sessionid=abc123')
-    service = GalleryDlService(_StubSettings(database))  # type: ignore[arg-type]
+    service = GalleryDlService(_StubSettings(database, tmp_path / 'downloads'))  # type: ignore[arg-type]
 
     args = service._cookie_args('instagram')
 
@@ -151,3 +165,38 @@ async def test_list_profile_items_raises_plain_error_for_unrelated_failures(
     with pytest.raises(RuntimeError) as exc_info:
         await service.list_profile_items('https://www.instagram.com/someuser/', [InstagramContentType.POST])
     assert not isinstance(exc_info.value, InstagramAuthRequiredError)
+
+
+def test_build_download_args_organizes_by_username_and_content_type_folder(tmp_path: Path) -> None:
+    service = _make_service(tmp_path)
+    job = _make_job(title='My Reel')
+
+    args = service._build_download_args(job, username='someuser', content_type='reel')
+
+    assert '-D' in args
+    directory = args[args.index('-D') + 1]
+    assert directory == str(tmp_path / 'downloads' / 'Instagram' / 'someuser' / 'Reels')
+    assert '-f' in args
+    assert args[args.index('-f') + 1] == 'My Reel.{extension}'
+    assert args[-1] == job.url
+
+
+def test_build_download_args_falls_back_to_posts_folder_for_unknown_content_type(tmp_path: Path) -> None:
+    service = _make_service(tmp_path)
+    job = _make_job(title='Untitled')
+
+    args = service._build_download_args(job, username='someuser', content_type=None)
+
+    directory = args[args.index('-D') + 1]
+    assert directory == str(tmp_path / 'downloads' / 'Instagram' / 'someuser' / 'Posts')
+
+
+def test_build_download_args_includes_cookie_flag_when_session_configured(tmp_path: Path) -> None:
+    database = tmp_path / 'pocketdl.db'
+    save_session_cookie(database, 'instagram', '.instagram.com', 'sessionid=abc123')
+    service = GalleryDlService(_StubSettings(database, tmp_path / 'downloads'))  # type: ignore[arg-type]
+    job = _make_job(title='My Post')
+
+    args = service._build_download_args(job, username='someuser', content_type='post')
+
+    assert '--cookies' in args

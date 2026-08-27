@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 
 from ...core.filenames import sanitize_filename
 from ...domain.errors import DownloadErrorCategory
-from ...domain.models import DownloadJob, DownloadSourceType, DownloadStatus, RequestContext
-from ...domain.ports import CaptureRepository, DownloadRepository, Downloader
+from ...domain.models import DownloadEngine, DownloadJob, DownloadSourceType, DownloadStatus, RequestContext
+from ...domain.ports import CaptureRepository, CollectionRepository, DownloadRepository, Downloader
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +21,7 @@ class JobOptions:
     source_type: DownloadSourceType
     capture_id: str | None
     audio_url: str | None
+    collection_item_id: str | None
 
 
 class QueueService:
@@ -30,10 +31,12 @@ class QueueService:
         downloader: Downloader,
         max_concurrent: int,
         capture_repository: CaptureRepository | None = None,
+        collection_repository: CollectionRepository | None = None,
     ) -> None:
         self.repository = repository
         self.downloader = downloader
         self.capture_repository = capture_repository
+        self.collection_repository = collection_repository
         self.semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.contexts: dict[str, RequestContext] = {}
@@ -53,6 +56,8 @@ class QueueService:
         title: str | None = None,
         format_id: str | None = None,
         audio_url: str | None = None,
+        engine: DownloadEngine = DownloadEngine.YT_DLP,
+        collection_item_id: str | None = None,
     ) -> DownloadJob:
         normalized_filename = sanitize_filename(filename) if filename else None
         if not normalized_filename and title:
@@ -83,6 +88,8 @@ class QueueService:
             started_at=None,
             finished_at=None,
             capture_id=capture_id,
+            engine=engine,
+            collection_item_id=collection_item_id,
         )
         await self.repository.add(job)
         self.contexts[job.id] = request_context
@@ -95,6 +102,7 @@ class QueueService:
             source_type=source_type,
             capture_id=capture_id,
             audio_url=audio_url,
+            collection_item_id=collection_item_id,
         )
         self.tasks[job.id] = asyncio.create_task(self._run(job.id))
         return job
@@ -107,6 +115,7 @@ class QueueService:
                     return
                 options = self.options[job_id]
                 capture_id = options.capture_id
+                collection_item_id = options.collection_item_id
                 request_context = self.contexts[job_id]
                 await self.downloader.download(
                     latest,
@@ -119,12 +128,17 @@ class QueueService:
                     source_type=options.source_type,
                     capture_id=capture_id,
                     audio_url=options.audio_url,
+                    collection_item_id=collection_item_id,
                     on_progress=self.repository.update,
                 )
                 if capture_id and self.capture_repository:
                     finished = await self.repository.get(job_id)
                     if finished is not None and finished.status is DownloadStatus.COMPLETED:
                         await self.capture_repository.mark_downloaded(capture_id)
+                if collection_item_id and self.collection_repository:
+                    finished = await self.repository.get(job_id)
+                    if finished is not None and finished.status is DownloadStatus.COMPLETED:
+                        await self.collection_repository.mark_item_downloaded(collection_item_id, job_id)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

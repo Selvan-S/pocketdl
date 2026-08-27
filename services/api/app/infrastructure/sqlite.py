@@ -41,7 +41,8 @@ class SqliteDownloadRepository(DownloadRepository):
                     started_at TEXT,
                     finished_at TEXT,
                     capture_id TEXT,
-                    engine TEXT NOT NULL DEFAULT 'yt_dlp'
+                    engine TEXT NOT NULL DEFAULT 'yt_dlp',
+                    collection_item_id TEXT
                 )
             ''')
             await self._ensure_columns(db)
@@ -64,6 +65,7 @@ class SqliteDownloadRepository(DownloadRepository):
             'source_type': "ALTER TABLE downloads ADD COLUMN source_type TEXT NOT NULL DEFAULT 'standard'",
             'capture_id': 'ALTER TABLE downloads ADD COLUMN capture_id TEXT',
             'engine': "ALTER TABLE downloads ADD COLUMN engine TEXT NOT NULL DEFAULT 'yt_dlp'",
+            'collection_item_id': 'ALTER TABLE downloads ADD COLUMN collection_item_id TEXT',
         }
         for column, statement in migrations.items():
             if column not in columns:
@@ -101,6 +103,7 @@ class SqliteDownloadRepository(DownloadRepository):
             finished_at=parse(row['finished_at']),
             capture_id=row['capture_id'],
             engine=DownloadEngine(row['engine'] or 'yt_dlp'),
+            collection_item_id=row['collection_item_id'],
         )
 
     async def add(self, job: DownloadJob) -> None:
@@ -109,8 +112,9 @@ class SqliteDownloadRepository(DownloadRepository):
                 '''INSERT INTO downloads (
                     id, url, filename, title, status, progress, downloaded_bytes, total_bytes,
                     speed_bytes, eta_seconds, output_path, error, error_details, error_category, exit_code, retry_count,
-                    impersonation, referer, origin, user_agent, source_type, created_at, started_at, finished_at, capture_id, engine
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    impersonation, referer, origin, user_agent, source_type, created_at, started_at, finished_at, capture_id, engine,
+                    collection_item_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                 (
                     job.id, job.url, job.filename, job.title, job.status.value, job.progress, job.downloaded_bytes,
                     job.total_bytes, job.speed_bytes, job.eta_seconds, job.output_path, job.error,
@@ -118,6 +122,7 @@ class SqliteDownloadRepository(DownloadRepository):
                     job.impersonation.value, job.referer, job.origin, job.user_agent, job.source_type.value,
                     job.created_at.isoformat(), job.started_at.isoformat() if job.started_at else None,
                     job.finished_at.isoformat() if job.finished_at else None, job.capture_id, job.engine.value,
+                    job.collection_item_id,
                 ),
             )
             await db.commit()

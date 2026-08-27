@@ -71,3 +71,4 @@ class DownloadJob:
     finished_at: datetime | None
     capture_id: str | None = None
     engine: DownloadEngine = DownloadEngine.YT_DLP
+    collection_item_id: str | None = None

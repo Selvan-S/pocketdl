@@ -1,11 +1,31 @@
 import asyncio
 import json
 import sys
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from ..application.downloads.errors import classify_download_error
 from ..core.config import Settings
-from ..core.session_store import has_session_cookie, session_cookie_file
+from ..core.filenames import sanitize_filename
+from ..core.media_paths import platform_media_path
+from ..core.session_store import has_session_cookie, scrub_cookie_values, session_cookie_file
 from ..domain.collections import InstagramContentType, ProfileItemPreview
+from ..domain.models import DownloadJob, DownloadStatus, RequestContext
+from ..domain.ports import CollectionRepository
+
+ProgressCallback = Callable[[DownloadJob], Awaitable[None]]
+
+# Instagram content_type values (see domain/collections.py) mapped to the
+# folder-tree names from docs/instagram-full-profile-plan.md's "Folder
+# organization" section.
+_CONTENT_TYPE_FOLDERS = {
+    'post': 'Posts',
+    'carousel': 'Posts',
+    'reel': 'Reels',
+    'story': 'Stories',
+    'highlight': 'Highlights',
+}
 
 # gallery-dl's --resolve-json/-J wire format is a stable, documented
 # protocol (gallery_dl.extractor.message.Message): each top-level array
@@ -36,8 +56,9 @@ class GalleryDlService:
     list_profile_items() for metadata-only discovery, download() for an
     actual fetch, version() for /system/status."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, collection_repository: CollectionRepository | None = None) -> None:
         self.settings = settings
+        self.collection_repository = collection_repository
         self._processes: dict[str, asyncio.subprocess.Process] = {}
 
     @staticmethod
@@ -165,6 +186,97 @@ class GalleryDlService:
                 raise InstagramAuthRequiredError(joined)
             raise RuntimeError(joined)
         return previews
+
+    def _build_download_args(self, job: DownloadJob, username: str | None, content_type: str | None) -> list[str]:
+        stem = sanitize_filename(job.filename) if job.filename else sanitize_filename(job.title or f'instagram-{job.id[:8]}')
+        folder = _CONTENT_TYPE_FOLDERS.get(content_type or '', 'Posts')
+        subfolders = [part for part in (username, folder) if part]
+        # {extension} is gallery-dl's own filename-format placeholder, left
+        # literal here for gallery-dl's -f to substitute -- the real
+        # extension isn't known until gallery-dl inspects the post.
+        target = platform_media_path(
+            self.settings.download_directory, 'Instagram', *subfolders, filename=f'{stem}.{{extension}}',
+        )
+        return [
+            sys.executable, '-m', 'gallery_dl',
+            '--no-mtime',
+            '-D', str(target.parent),
+            '-f', target.name,
+            *self._cookie_args('instagram'),
+            job.url,
+        ]
+
+    async def download(
+        self,
+        job: DownloadJob,
+        *,
+        context: RequestContext,
+        retries: int,
+        on_progress: ProgressCallback,
+        collection_item_id: str | None = None,
+    ) -> DownloadJob:
+        job.status = DownloadStatus.RUNNING
+        job.started_at = datetime.now(timezone.utc)
+        job.error = None
+        job.error_details = None
+        job.error_category = None
+        job.exit_code = None
+        await on_progress(job)
+
+        username: str | None = None
+        content_type: str | None = None
+        if collection_item_id and self.collection_repository:
+            item = await self.collection_repository.get_item(collection_item_id)
+            if item is not None:
+                username = item.author_username
+                content_type = item.content_type
+
+        args = self._build_download_args(job, username, content_type)
+        output_lines: list[str] = []
+        last_line = ''
+
+        process = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        self._processes[job.id] = process
+        try:
+            assert process.stdout is not None
+            async for raw_line in process.stdout:
+                line = raw_line.decode(errors='replace').rstrip()
+                if line:
+                    output_lines.append(line)
+                    last_line = line
+                    # gallery-dl has no byte-level progress in its default
+                    # (non-verbose) output -- each printed line is roughly
+                    # one completed file, a coarser signal than yt-dlp's
+                    # percent updates. See instagram-full-profile-plan.md.
+                    job.progress = min(95.0, job.progress + 5.0)
+                await on_progress(job)
+            return_code = await process.wait()
+        finally:
+            self._processes.pop(job.id, None)
+
+        if job.status is DownloadStatus.CANCELLED:
+            return job
+
+        combined_output = '\n'.join(output_lines)
+        scrubbed_output = scrub_cookie_values(combined_output, self.settings.database_path, 'instagram')
+        job.exit_code = return_code
+        if return_code == 0:
+            job.status = DownloadStatus.COMPLETED
+            job.progress = 100.0
+            job.output_path = last_line or None
+            job.error = None
+            job.error_details = None
+            job.error_category = None
+        else:
+            job.status = DownloadStatus.FAILED
+            job.error = f'gallery-dl exited with code {return_code}.'
+            job.error_details = scrubbed_output.strip() or job.error
+            job.error_category = classify_download_error(scrubbed_output)
+        job.finished_at = datetime.now(timezone.utc)
+        await on_progress(job)
+        return job
 
     async def cancel(self, job_id: str) -> None:
         process = self._processes.get(job_id)

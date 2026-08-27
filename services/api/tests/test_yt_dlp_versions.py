@@ -13,8 +13,12 @@ class _StubCapturedMedia:
     pass
 
 
+class _StubGalleryDl:
+    pass
+
+
 def _make_service(monkeypatch: pytest.MonkeyPatch, calls: list[list[str]]) -> YtDlpService:
-    service = YtDlpService(_StubSettings(), _StubCapturedMedia())  # type: ignore[arg-type]
+    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), _StubGalleryDl())  # type: ignore[arg-type]
 
     def fake_tool_version(command: list[str]) -> str | None:
         calls.append(command)

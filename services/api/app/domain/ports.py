@@ -31,6 +31,7 @@ class Downloader(Protocol):
         source_type: DownloadSourceType,
         capture_id: str | None,
         audio_url: str | None,
+        collection_item_id: str | None,
         on_progress: ProgressCallback,
     ) -> DownloadJob: ...
 
