@@ -111,7 +111,7 @@ async def test_deleting_a_collection_deletes_its_items() -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_collection_fans_out_one_job_per_item_via_gallery_dl_engine() -> None:
+async def test_download_collection_fans_out_one_job_per_item_via_instaloader_engine() -> None:
     service, _ = _make_service()
     collection = await service.create_collection(Platform.INSTAGRAM, 'Reels')
     first = await service.add_item(collection.id, _make_preview('https://www.instagram.com/p/one/'))
@@ -120,7 +120,7 @@ async def test_download_collection_fans_out_one_job_per_item_via_gallery_dl_engi
     jobs = await service.download_collection(collection.id, None, request_context=RequestContext())
 
     assert {job.url for job in jobs} == {first.source_url, second.source_url}
-    assert all(job.engine is DownloadEngine.GALLERY_DL for job in jobs)
+    assert all(job.engine is DownloadEngine.INSTALOADER for job in jobs)
     assert {job.collection_item_id for job in jobs} == {first.id, second.id}
 
 

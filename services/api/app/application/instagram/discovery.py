@@ -1,7 +1,8 @@
+from datetime import datetime
 from urllib.parse import urlparse
 
 from ...domain.collections import InstagramContentType, ProfileItemPreview
-from ...infrastructure.gallery_dl import GalleryDlService
+from ...infrastructure.instaloader_service import InstaloaderService
 
 
 class ProfileDiscoveryService:
@@ -9,8 +10,8 @@ class ProfileDiscoveryService:
     persisted here. A caller turns a chosen subset of the returned previews
     into CollectionItems via CollectionService."""
 
-    def __init__(self, gallery_dl: GalleryDlService) -> None:
-        self.gallery_dl = gallery_dl
+    def __init__(self, instaloader_service: InstaloaderService) -> None:
+        self.instaloader_service = instaloader_service
 
     @staticmethod
     def _validate_profile_url(value: str) -> None:
@@ -20,8 +21,25 @@ class ProfileDiscoveryService:
         if 'instagram.com' not in parsed.netloc.lower():
             raise ValueError('profile_url must be an instagram.com profile URL.')
 
-    async def preview(self, profile_url: str, content_types: list[InstagramContentType]) -> list[ProfileItemPreview]:
+    @staticmethod
+    def _validate_range(since: datetime | None, until: datetime | None) -> None:
+        if since is not None and until is not None and since > until:
+            raise ValueError('posted_after must not be later than posted_before.')
+
+    async def preview(
+        self,
+        profile_url: str,
+        content_types: list[InstagramContentType],
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[ProfileItemPreview]:
         self._validate_profile_url(profile_url)
         if not content_types:
             raise ValueError('At least one content type must be requested.')
-        return await self.gallery_dl.list_profile_items(profile_url, content_types)
+        self._validate_range(since, until)
+        return await self.instaloader_service.list_profile_items(profile_url, content_types, since, until)
+
+    async def verify_session(self) -> str | None:
+        """Returns the username the stored session cookie authenticates as,
+        or None if there is no session configured or it does not work."""
+        return await self.instaloader_service.test_session()

@@ -26,6 +26,16 @@ class _RecordingGalleryDl:
         return job
 
 
+class _RecordingInstaloader:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def download(self, job, *, context, retries, on_progress, collection_item_id=None):
+        self.calls.append({'job': job, 'collection_item_id': collection_item_id})
+        job.status = DownloadStatus.COMPLETED
+        return job
+
+
 def _make_job(engine: DownloadEngine, collection_item_id: str | None = None) -> DownloadJob:
     now = datetime.now(timezone.utc)
     return DownloadJob(
@@ -41,7 +51,7 @@ def _make_job(engine: DownloadEngine, collection_item_id: str | None = None) -> 
 @pytest.mark.asyncio
 async def test_gallery_dl_engine_job_dispatches_to_gallery_dl_service() -> None:
     gallery_dl = _RecordingGalleryDl()
-    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), gallery_dl)  # type: ignore[arg-type]
+    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), gallery_dl, _RecordingInstaloader())  # type: ignore[arg-type]
     job = _make_job(DownloadEngine.GALLERY_DL, collection_item_id='item-1')
 
     async def on_progress(_job):
@@ -56,3 +66,23 @@ async def test_gallery_dl_engine_job_dispatches_to_gallery_dl_service() -> None:
     assert result.status is DownloadStatus.COMPLETED
     assert len(gallery_dl.calls) == 1
     assert gallery_dl.calls[0]['collection_item_id'] == 'item-1'
+
+
+@pytest.mark.asyncio
+async def test_instaloader_engine_job_dispatches_to_instaloader_service() -> None:
+    instaloader_service = _RecordingInstaloader()
+    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), _RecordingGalleryDl(), instaloader_service)  # type: ignore[arg-type]
+    job = _make_job(DownloadEngine.INSTALOADER, collection_item_id='item-1')
+
+    async def on_progress(_job):
+        pass
+
+    result = await service.download(
+        job, preset='best', concurrent_fragments=1, retries=1, use_aria2=False,
+        request_context=RequestContext(), source_type=DownloadSourceType.STANDARD,
+        capture_id=None, on_progress=on_progress, collection_item_id='item-1',
+    )
+
+    assert result.status is DownloadStatus.COMPLETED
+    assert len(instaloader_service.calls) == 1
+    assert instaloader_service.calls[0]['collection_item_id'] == 'item-1'

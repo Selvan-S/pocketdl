@@ -10,7 +10,7 @@ from ..downloads.service import QueueService
 class CollectionService:
     """Create/manage named collections ("playlists") of discovered items and
     fan a download out into the existing download-creation use case -- one
-    QueueService.create() call per item, engine=GALLERY_DL -- rather than
+    QueueService.create() call per item, engine=INSTALOADER -- rather than
     building a parallel download path."""
 
     def __init__(self, repository: CollectionRepository, queue: QueueService) -> None:
@@ -104,7 +104,7 @@ class CollectionService:
                 use_aria2=False,
                 request_context=request_context,
                 title=self._default_title(item),
-                engine=DownloadEngine.GALLERY_DL,
+                engine=DownloadEngine.INSTALOADER,
                 collection_item_id=item.id,
             )
             jobs.append(job)

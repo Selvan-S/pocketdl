@@ -18,6 +18,10 @@ class _StubGalleryDl:
     pass
 
 
+class _StubInstaloaderService:
+    pass
+
+
 def _make_job() -> DownloadJob:
     now = datetime.now(timezone.utc)
     return DownloadJob(
@@ -34,7 +38,7 @@ def test_build_args_adds_no_check_certificate_flag_for_that_attempt() -> None:
     # Python's ssl module rejects even though browsers tolerate it via AIA
     # chasing. The cert-verify retry attempt must actually pass
     # --no-check-certificate through to yt-dlp.
-    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), _StubGalleryDl())  # type: ignore[arg-type]
+    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), _StubGalleryDl(), _StubInstaloaderService())  # type: ignore[arg-type]
     job = _make_job()
     attempt = DownloadAttempt(label='standard+no-check-certificate', no_check_certificate=True)
 
@@ -47,7 +51,7 @@ def test_build_args_adds_no_check_certificate_flag_for_that_attempt() -> None:
 
 
 def test_build_args_omits_no_check_certificate_by_default() -> None:
-    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), _StubGalleryDl())  # type: ignore[arg-type]
+    service = YtDlpService(_StubSettings(), _StubCapturedMedia(), _StubGalleryDl(), _StubInstaloaderService())  # type: ignore[arg-type]
     job = _make_job()
     attempt = DownloadAttempt(label='standard')
 

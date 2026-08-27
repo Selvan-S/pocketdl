@@ -24,15 +24,23 @@ from ..domain.analyzer import MediaAnalysis, parse_media_analysis
 from ..domain.models import DownloadEngine, DownloadJob, DownloadStatus, DownloadSourceType, RequestContext
 from .ffmpeg import CapturedMediaService
 from .gallery_dl import GalleryDlService
+from .instaloader_service import InstaloaderService
 
 ProgressCallback = Callable[[DownloadJob], Awaitable[None]]
 
 
 class YtDlpService:
-    def __init__(self, settings: Settings, captured_media: CapturedMediaService, gallery_dl: GalleryDlService) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        captured_media: CapturedMediaService,
+        gallery_dl: GalleryDlService,
+        instaloader_service: InstaloaderService,
+    ) -> None:
         self.settings = settings
         self.captured_media = captured_media
         self.gallery_dl = gallery_dl
+        self.instaloader_service = instaloader_service
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         # yt-dlp/ffmpeg/aria2 versions only change on an explicit "Update
         # yt-dlp" action or a backend restart, never mid-session, so there is
@@ -234,6 +242,15 @@ class YtDlpService:
     ) -> DownloadJob:
         if job.engine is DownloadEngine.GALLERY_DL:
             return await self.gallery_dl.download(
+                job,
+                context=request_context,
+                retries=retries,
+                on_progress=on_progress,
+                collection_item_id=collection_item_id,
+            )
+
+        if job.engine is DownloadEngine.INSTALOADER:
+            return await self.instaloader_service.download(
                 job,
                 context=request_context,
                 retries=retries,
