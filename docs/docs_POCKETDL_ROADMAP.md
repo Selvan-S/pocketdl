@@ -354,24 +354,62 @@ Done so far, each landed as its own commit:
   error output.
 - Infrastructure: `GalleryDlService` (`infrastructure/gallery_dl.py`) —
   `list_profile_items()` metadata-only discovery via `--resolve-json`,
-  parsing gallery-dl's stable Message-tuple wire protocol; `media_paths.py`
-  for the `<root>/<platform>/<subfolders>/<filename>` output layout.
+  parsing gallery-dl's stable Message-tuple wire protocol; `download()`
+  building `-D`/`-f` args via `media_paths.py`'s
+  `<root>/<platform>/<subfolders>/<filename>` layout, scrubbing the session
+  cookie out of captured output before it can reach `job.error_details`.
+- Engine dispatch: `DownloadJob.collection_item_id` threaded through
+  `QueueService`/`YtDlpService` exactly like the existing `capture_id`
+  (`_run()` calls `CollectionRepository.mark_item_downloaded` on
+  completion); `YtDlpService.download()` dispatches to `GalleryDlService`
+  when `job.engine is DownloadEngine.GALLERY_DL`, checked before the
+  existing `source_type` branch.
+- Application: `ProfileDiscoveryService` (validates the profile URL, thin
+  wrapper over discovery) and `CollectionService` (create/rename/delete a
+  collection, add/remove items, `download_collection` fans out into
+  `QueueService.create()` — one call per item, engine=GALLERY_DL — skipping
+  items that already completed).
+- API: `POST /api/instagram/profile/preview`,
+  `GET/POST/DELETE /api/instagram/session`,
+  `GET/POST /api/collections`, `GET/PUT/DELETE /api/collections/{id}`,
+  `GET/POST /api/collections/{id}/items`,
+  `DELETE /api/collections/{id}/items/{item_id}`,
+  `POST /api/collections/{id}/download`.
+- UI: `InstagramPanel.tsx` — session-cookie control, profile browser
+  (URL + content-type checkboxes → preview grid → add selection to a
+  playlist), playlists view (download all/selected, remove item, delete
+  playlist), as a new collapsible section on the main page.
 
 Important finding while building discovery (see CLAUDE.md's "Important
 proven behavior"): an unauthenticated profile fetch fails with a
 `NotFoundError` that looks like a wrong username, not a real 404 — every
 profile fetch needs the session cookie today, not just Stories/Highlights.
 `list_profile_items` now raises a distinct `InstagramAuthRequiredError` for
-this. Field-mapping accuracy (username/caption/thumbnail extraction) is
-implemented from gallery-dl's own source but **not yet live-verified**
-against real authenticated data — no login credentials were available
-during this pass. Verify with a real session cookie before trusting the
-preview output in production.
+this, mapped to HTTP 401. Verified live end-to-end in a real browser
+(Playwright driving the Vite dev server against the real FastAPI backend,
+no chromium-cli available in this sandbox so Playwright was installed
+directly): session save/clear, a real profile-preview call correctly
+hitting the 401 case and surfacing it as a clean message, and a real
+`download_collection` fan-out that queued and ran an actual gallery-dl job
+end to end, visible in the Download Queue, failing cleanly with
+`[instagram][error] HTTP redirect to login page` for the fake test
+credentials used. `classify_download_error` now recognizes that message as
+`authentication_required` rather than `unknown`.
 
-Still to build: `download()` on `GalleryDlService` plus wiring a job's
-`engine` through `QueueService`/`YtDlpService` dispatch; application layer
-(`ProfileDiscoveryService`, `CollectionService`); API endpoints; UI (Profile
-browser, Playlists view).
+Field-mapping accuracy for a *successful* authenticated preview
+(username/caption/thumbnail extraction from gallery-dl's real JSON output)
+is implemented from gallery-dl's own source but **still not live-verified
+against a real signed-in session** — no login credentials were available
+during this pass, only the well-proven unauthenticated failure path.
+Verify with a real session cookie before trusting the preview output in
+production; this is the one remaining gate before calling the pilot done,
+same "stop and diagnose" discipline as an unverified mobile milestone.
+
+Also still open, lower priority: gallery-dl under Termux is unverified
+(only the desktop pip-install spike ran); a preview call against an
+unauthenticated or slow-to-fail profile can take up to the 120s
+subprocess timeout before surfacing an error, which is a UX rough edge
+worth revisiting once real usage data exists.
 
 ---
 
