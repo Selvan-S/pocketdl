@@ -335,6 +335,44 @@ its own small discovery spike (does gallery-dl/yt-dlp actually cover the
 content types we want, under Termux) before committing to full layer-by-layer
 implementation, same as the Instagram plan's gallery-dl-on-Termux spike.
 
+## Instagram pilot — implementation progress (branch feature/phase5-instagram-collections)
+Bottom-up build in progress per instagram-full-profile-plan.md's sequencing.
+Done so far, each landed as its own commit:
+- gallery-dl added as a dependency; desktop install spike passed (pure
+  Python, no native wheel step). Termux install still unverified.
+- Domain: `Collection`/`CollectionItem`/`ProfileItemPreview`
+  (`domain/collections.py`), `Platform` enum (Instagram only for now, field
+  present on Collection from the start), `DownloadEngine` on `DownloadJob`
+  orthogonal to `source_type`.
+- Persistence: `collections`/`collection_items` tables
+  (`infrastructure/collections.py`), `downloads.engine` column migration.
+- Security: session cookie storage (`core/session_store.py`) — user-pasted
+  browser Cookie header only, never a password, written as a Netscape
+  cookies.txt gallery-dl's `--cookies` flag reads, in its own gitignored
+  file separate from the main DB, never echoed back by any endpoint, with a
+  scrub helper for defense-in-depth against the value leaking into engine
+  error output.
+- Infrastructure: `GalleryDlService` (`infrastructure/gallery_dl.py`) —
+  `list_profile_items()` metadata-only discovery via `--resolve-json`,
+  parsing gallery-dl's stable Message-tuple wire protocol; `media_paths.py`
+  for the `<root>/<platform>/<subfolders>/<filename>` output layout.
+
+Important finding while building discovery (see CLAUDE.md's "Important
+proven behavior"): an unauthenticated profile fetch fails with a
+`NotFoundError` that looks like a wrong username, not a real 404 — every
+profile fetch needs the session cookie today, not just Stories/Highlights.
+`list_profile_items` now raises a distinct `InstagramAuthRequiredError` for
+this. Field-mapping accuracy (username/caption/thumbnail extraction) is
+implemented from gallery-dl's own source but **not yet live-verified**
+against real authenticated data — no login credentials were available
+during this pass. Verify with a real session cookie before trusting the
+preview output in production.
+
+Still to build: `download()` on `GalleryDlService` plus wiring a job's
+`engine` through `QueueService`/`YtDlpService` dispatch; application layer
+(`ProfileDiscoveryService`, `CollectionService`); API endpoints; UI (Profile
+browser, Playlists view).
+
 ---
 
 # Phase 6 — Download manager maturity

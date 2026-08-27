@@ -56,3 +56,18 @@ class CollectionItem:
     external_id: str | None
     added_at: datetime
     downloaded_job_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileItemPreview:
+    """One discoverable item as returned by profile discovery, before the
+    user has chosen to add it to a Collection -- same shape as
+    CollectionItem minus the fields that only exist once persisted
+    (id, collection_id, added_at, downloaded_job_id)."""
+
+    source_url: str
+    content_type: str
+    author_username: str | None
+    caption: str | None
+    thumbnail_url: str | None
+    external_id: str | None

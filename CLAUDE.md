@@ -83,6 +83,11 @@ A difficult HLS site was experimentally verified as follows:
 
 Therefore, do NOT waste time endlessly adding random yt-dlp headers or impersonation targets. Browser capture is the intended solution for this class of source.
 
+Instagram profile discovery (gallery-dl engine, added for Phase 5) was experimentally verified as follows (2026-08-27, gallery-dl 1.32.9):
+- `gallery-dl --resolve-json` against a real public Instagram profile URL, with no session cookie configured: returns `{"error": "NotFoundError", "message": "Requested user could not be found"}` — indistinguishable at a glance from a genuinely wrong username, not a normal HTTP 403/404.
+
+Therefore every Instagram profile fetch needs an authenticated session cookie today, not just Stories/Highlights as originally assumed when instagram-full-profile-plan.md was written. `GalleryDlService.list_profile_items` classifies this specific error shape into `InstagramAuthRequiredError` so the API/UI can say "sign in required" instead of a confusing empty result. Full JSON field-mapping (username/caption/thumbnail extraction) is implemented from gallery-dl's source but not yet live-verified against real authenticated data — do this before trusting it in production, same "stop and diagnose" discipline as the mobile M-milestones.
+
 ## Current known bugs / backlog
 1. Duplicate captured cards — mostly fixed (signed-token normalization,
    HLS master/variant grouping). Still open: multi-CDN/hostname-rotation
