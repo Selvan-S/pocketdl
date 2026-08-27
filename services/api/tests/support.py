@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.domain.captures import CaptureVariant, CapturedSource
+from app.domain.collections import Collection, CollectionItem
 from app.infrastructure.media_probe import MediaProbeResult
 
 
@@ -82,3 +83,52 @@ class InMemoryCaptureRepository:
             if any(variant.variant_key == variant_key for variant in variants):
                 return self.items.get(capture_id)
         return None
+
+
+class InMemoryCollectionRepository:
+    def __init__(self) -> None:
+        self.collections: dict[str, Collection] = {}
+        self.items: dict[str, CollectionItem] = {}
+
+    async def add_collection(self, collection: Collection) -> Collection:
+        self.collections[collection.id] = collection
+        return collection
+
+    async def get_collection(self, collection_id: str) -> Collection | None:
+        return self.collections.get(collection_id)
+
+    async def list_collections(self) -> list[Collection]:
+        return list(self.collections.values())
+
+    async def rename_collection(self, collection_id: str, name: str) -> Collection | None:
+        collection = self.collections.get(collection_id)
+        if collection is None:
+            return None
+        collection.name = name
+        collection.updated_at = datetime.now(timezone.utc)
+        return collection
+
+    async def delete_collection(self, collection_id: str) -> None:
+        self.collections.pop(collection_id, None)
+        for item_id in [item_id for item_id, item in self.items.items() if item.collection_id == collection_id]:
+            self.items.pop(item_id, None)
+
+    async def add_item(self, item: CollectionItem) -> CollectionItem:
+        self.items[item.id] = item
+        return item
+
+    async def get_item(self, item_id: str) -> CollectionItem | None:
+        return self.items.get(item_id)
+
+    async def list_items(self, collection_id: str) -> list[CollectionItem]:
+        return [item for item in self.items.values() if item.collection_id == collection_id]
+
+    async def remove_item(self, collection_id: str, item_id: str) -> None:
+        item = self.items.get(item_id)
+        if item and item.collection_id == collection_id:
+            self.items.pop(item_id, None)
+
+    async def mark_item_downloaded(self, item_id: str, job_id: str) -> None:
+        item = self.items.get(item_id)
+        if item:
+            item.downloaded_job_id = job_id
