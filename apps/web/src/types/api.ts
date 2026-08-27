@@ -141,6 +141,11 @@ export interface SettingsResponse {
   default_download_directory: string;
 }
 
+export interface BrowseDirectoryResponse {
+  /** The chosen absolute path, or null if the user cancelled the dialog. */
+  path: string | null;
+}
+
 export type InstagramContentType = 'post' | 'carousel' | 'reel' | 'story' | 'highlight';
 
 export interface InstagramProfilePreviewRequest {

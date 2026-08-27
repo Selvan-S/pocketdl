@@ -1,5 +1,6 @@
 import type {
   AnalyzeResponse,
+  BrowseDirectoryResponse,
   CaptureDownloadRequest,
   CaptureItem,
   Collection,
@@ -66,6 +67,7 @@ export const api = {
   updateSettings: (downloadDirectory: string) => request<SettingsResponse>('/settings', { method: 'PUT', body: JSON.stringify({ download_directory: downloadDirectory }) }),
   resetDownloadDirectory: () => request<SettingsResponse>('/settings/reset-download-directory', { method: 'POST' }),
   openDownloadDirectory: () => request<{ ok: true; download_directory: string }>('/settings/open-download-directory', { method: 'POST' }),
+  browseDownloadDirectory: () => request<BrowseDirectoryResponse>('/settings/browse-download-directory', { method: 'POST' }),
 
   previewInstagramProfile: (payload: InstagramProfilePreviewRequest) =>
     request<InstagramProfilePreviewResponse>('/instagram/profile/preview', { method: 'POST', body: JSON.stringify(payload) }),

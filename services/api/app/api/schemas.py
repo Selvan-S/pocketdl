@@ -237,6 +237,11 @@ class SettingsUpdateRequest(BaseModel):
     download_directory: str = Field(min_length=1, max_length=2000)
 
 
+class BrowseDirectoryResponse(BaseModel):
+    path: str | None
+    """The chosen absolute path, or None if the user cancelled the dialog."""
+
+
 class InstagramProfilePreviewRequest(BaseModel):
     profile_url: str
     content_types: list[Literal['post', 'carousel', 'reel', 'story', 'highlight']] = Field(

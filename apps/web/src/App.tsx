@@ -143,6 +143,18 @@ export default function App() {
     }
   }
 
+  async function browseDownloadDirectory(): Promise<string | null> {
+    try {
+      const result = await api.browseDownloadDirectory();
+      return result.path;
+    } catch (error: unknown) {
+      // Expected on Termux/headless environments (no display for a native
+      // folder dialog) -- surfaced as a message, not treated as a crash.
+      setMessage(error instanceof Error ? error.message : 'Unable to open the folder picker.');
+      return null;
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -163,6 +175,7 @@ export default function App() {
           onSave={saveSettings}
           onReset={resetSettings}
           onOpen={openFolder}
+          onBrowse={browseDownloadDirectory}
           busy={settingsBusy}
         />
       )}

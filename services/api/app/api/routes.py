@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
@@ -6,6 +7,7 @@ from .schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     AnalyzedFormatResponse,
+    BrowseDirectoryResponse,
     CaptureCreateRequest,
     CaptureDownloadRequest,
     CaptureResponse,
@@ -30,7 +32,7 @@ from .schemas import (
 from ..application.captures.service import CaptureService
 from ..application.collections.service import CollectionService
 from ..core.path_settings import normalize_download_directory
-from ..core.platform import open_directory
+from ..core.platform import DirectoryPickerUnavailable, browse_for_directory, open_directory
 from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
 from ..core.settings_store import clear_download_directory, save_download_directory
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
@@ -384,6 +386,20 @@ async def open_download_directory(request: Request) -> dict[str, object]:
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f'Unable to open download directory: {exc}') from exc
     return {'ok': True, 'download_directory': str(settings.download_directory)}
+
+
+@router.post('/settings/browse-download-directory', response_model=BrowseDirectoryResponse)
+async def browse_download_directory(request: Request) -> BrowseDirectoryResponse:
+    """Desktop-only: opens a native OS folder picker on the machine running
+    the backend and returns the chosen path without saving it -- the caller
+    still confirms via the existing PUT /settings, same as if they had
+    typed the path themselves."""
+    settings = request.app.state.settings
+    try:
+        chosen = await asyncio.to_thread(browse_for_directory, settings.download_directory)
+    except DirectoryPickerUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    return BrowseDirectoryResponse(path=chosen)
 
 
 @router.get('/system/status', response_model=SystemStatusResponse)
