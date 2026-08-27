@@ -3,6 +3,7 @@ import { api } from './api/client';
 import { DownloadForm } from './components/DownloadForm';
 import { DownloadList } from './components/DownloadList';
 import { CaptureList } from './components/CaptureList';
+import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, DownloadCreateRequest, DownloadItem, SettingsResponse, SystemStatus } from './types/api';
 import './styles.css';
@@ -208,6 +209,18 @@ export default function App() {
             }
           }}
         />
+      </details>
+
+      <details className="section-collapsible">
+        <summary className="section-collapsible-summary">
+          <div>
+            <div className="eyebrow">INSTAGRAM</div>
+            <h2>Profiles &amp; playlists</h2>
+            <span>Browse a profile, save a selection, download it on demand</span>
+          </div>
+          <span className="section-chevron">−</span>
+        </summary>
+        <InstagramPanel onMessage={setMessage} onDownloadQueued={refresh} />
       </details>
 
       <details className="section-collapsible" open>

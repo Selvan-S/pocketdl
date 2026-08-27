@@ -140,3 +140,56 @@ export interface SettingsResponse {
   download_directory: string;
   default_download_directory: string;
 }
+
+export type InstagramContentType = 'post' | 'carousel' | 'reel' | 'story' | 'highlight';
+
+export interface InstagramProfilePreviewRequest {
+  profile_url: string;
+  content_types?: InstagramContentType[];
+}
+
+export interface ProfileItemPreview {
+  source_url: string;
+  content_type: InstagramContentType;
+  author_username: string | null;
+  caption: string | null;
+  thumbnail_url: string | null;
+  external_id: string | null;
+}
+
+export interface InstagramProfilePreviewResponse {
+  items: ProfileItemPreview[];
+}
+
+export interface InstagramSessionStatus {
+  configured: boolean;
+}
+
+export interface Collection {
+  id: string;
+  platform: 'instagram';
+  name: string;
+  item_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionItem {
+  id: string;
+  collection_id: string;
+  source_url: string;
+  content_type: InstagramContentType;
+  author_username: string | null;
+  caption: string | null;
+  thumbnail_url: string | null;
+  external_id: string | null;
+  added_at: string;
+  downloaded_job_id: string | null;
+}
+
+export interface CollectionDownloadRequest {
+  item_ids?: string[];
+  preset?: 'best' | '1080p' | '720p' | 'audio';
+  concurrent_fragments?: number;
+  retries?: number;
+}
