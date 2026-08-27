@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from pathlib import Path
@@ -25,9 +26,48 @@ def _parse_cookie_header(cookie_header: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def _parse_cookie_json(raw: str) -> list[tuple[str, str]] | None:
+    """Browser cookie-export extensions (Cookie-Editor, EditThisCookie,
+    "Get cookies.txt LOCALLY") commonly export a JSON array of
+    ``{"name": ..., "value": ..., ...}`` objects, or occasionally a plain
+    ``{"name": "value", ...}`` map. Returns None (not an error) when the
+    input isn't JSON at all, so the caller can fall back to the raw
+    ``Cookie:`` header format.
+    """
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+    pairs: list[tuple[str, str]] = []
+    if isinstance(parsed, list):
+        for entry in parsed:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get('name')
+            value = entry.get('value')
+            if isinstance(name, str) and name and isinstance(value, str):
+                pairs.append((name, value))
+    elif isinstance(parsed, dict):
+        for name, value in parsed.items():
+            if isinstance(name, str) and name and isinstance(value, str):
+                pairs.append((name, value))
+    return pairs
+
+
+def _parse_cookie_input(raw: str) -> list[tuple[str, str]]:
+    json_pairs = _parse_cookie_json(raw)
+    if json_pairs is not None:
+        return json_pairs
+    return _parse_cookie_header(raw)
+
+
 def save_session_cookie(database_path: Path, platform: str, domain: str, cookie_header: str) -> int:
-    """Store a user-pasted browser `Cookie:` header as a Netscape-format
-    cookies.txt file, the format gallery-dl's ``--cookies FILE`` reads.
+    """Store a user-pasted browser session as a Netscape-format cookies.txt
+    file, the format gallery-dl's ``--cookies FILE`` reads. Accepts either
+    the raw ``Cookie:`` header string (``name=value; name2=value2``) or a
+    JSON cookie export from a browser extension (an array of
+    ``{"name", "value", ...}`` objects, or a plain name->value map).
 
     PocketDL never asks for or stores a password -- only a session cookie the
     user exports from their own already-authenticated browser session. The
@@ -35,9 +75,9 @@ def save_session_cookie(database_path: Path, platform: str, domain: str, cookie_
     `configured: bool` derived from `has_session_cookie`. Returns the number
     of individual cookies parsed, for a confirmation message.
     """
-    pairs = _parse_cookie_header(cookie_header)
+    pairs = _parse_cookie_input(cookie_header)
     if not pairs:
-        raise ValueError('No cookies found in the pasted value.')
+        raise ValueError('No cookies found in the pasted value. Paste either a Cookie header or a JSON cookie export.')
 
     path = session_cookie_file(database_path, platform)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,41 @@ def test_save_session_cookie_rejects_empty_input(tmp_path: Path) -> None:
     database = tmp_path / 'pocketdl.db'
     with pytest.raises(ValueError):
         save_session_cookie(database, 'instagram', '.instagram.com', '   ')
+
+
+def test_save_session_cookie_accepts_a_cookie_editor_style_json_export(tmp_path: Path) -> None:
+    # The shape exported by common browser cookie-export extensions
+    # (Cookie-Editor, EditThisCookie): an array of cookie objects with a lot
+    # of fields PocketDL doesn't need, only name/value matter here.
+    database = tmp_path / 'pocketdl.db'
+    exported = json.dumps([
+        {'domain': '.instagram.com', 'name': 'sessionid', 'value': 'abc123', 'path': '/', 'secure': True, 'httpOnly': True},
+        {'domain': '.instagram.com', 'name': 'csrftoken', 'value': 'def456', 'path': '/', 'secure': True, 'httpOnly': False},
+        {'domain': '.instagram.com', 'name': 'not_a_cookie', 'value': None, 'path': '/'},
+    ])
+
+    count = save_session_cookie(database, 'instagram', '.instagram.com', exported)
+
+    assert count == 2
+    path = session_cookie_file(database, 'instagram')
+    content = path.read_text(encoding='utf-8')
+    assert 'sessionid\tabc123' in content
+    assert 'csrftoken\tdef456' in content
+
+
+def test_save_session_cookie_accepts_a_plain_json_name_value_map(tmp_path: Path) -> None:
+    database = tmp_path / 'pocketdl.db'
+    exported = json.dumps({'sessionid': 'abc123', 'csrftoken': 'def456'})
+
+    count = save_session_cookie(database, 'instagram', '.instagram.com', exported)
+
+    assert count == 2
+
+
+def test_save_session_cookie_rejects_json_with_no_usable_cookies(tmp_path: Path) -> None:
+    database = tmp_path / 'pocketdl.db'
+    with pytest.raises(ValueError):
+        save_session_cookie(database, 'instagram', '.instagram.com', '[]')
 
 
 def test_saved_cookie_file_is_netscape_format_and_never_needs_reading_by_the_api(tmp_path: Path) -> None:

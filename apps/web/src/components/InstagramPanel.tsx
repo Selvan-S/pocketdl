@@ -58,19 +58,25 @@ function SessionControl({
   const [expanded, setExpanded] = useState(false);
   const [cookie, setCookie] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function save() {
     const value = cookie.trim();
     if (!value) return;
     setBusy(true);
+    setError(null);
     try {
       const next = await api.setInstagramSession(value);
       onChange(next);
       setCookie('');
       setExpanded(false);
       onMessage('Instagram session saved.');
-    } catch (error) {
-      onMessage(error instanceof Error ? error.message : 'Unable to save the session cookie.');
+    } catch (caughtError) {
+      // Also shown inline (not just via onMessage) since the shared message
+      // banner lives at the top of the page, far from this form.
+      const text = caughtError instanceof Error ? caughtError.message : 'Unable to save the session cookie.';
+      setError(text);
+      onMessage(text);
     } finally {
       setBusy(false);
     }
@@ -93,7 +99,14 @@ function SessionControl({
         <span className={`status-badge ${session?.configured ? 'used' : ''}`}>
           {session?.configured ? 'Session configured' : 'No session configured'}
         </span>
-        <button type="button" className="link-button" onClick={() => setExpanded((value) => !value)}>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => {
+            setExpanded((value) => !value);
+            setError(null);
+          }}
+        >
           {expanded ? 'Cancel' : session?.configured ? 'Replace session' : 'Add session cookie'}
         </button>
         {session?.configured && (
@@ -105,17 +118,20 @@ function SessionControl({
       {expanded && (
         <div className="instagram-session-form">
           <label>
-            Paste your browser&apos;s Cookie header for instagram.com
+            Paste your browser&apos;s Cookie header for instagram.com, or a JSON cookie export
             <textarea
               value={cookie}
               onChange={(event) => setCookie(event.target.value)}
-              placeholder="sessionid=...; csrftoken=...;"
+              placeholder={'sessionid=...; csrftoken=...;\nor: [{"name":"sessionid","value":"..."}, ...]'}
             />
           </label>
           <div className="field-help">
-            Never a password. Only a session cookie exported from your own already signed-in browser, used to browse
-            profiles you can already access. Stored locally, never shown again.
+            Never a password. Either the raw <code>Cookie:</code> header value from DevTools, or an export from a
+            cookie-manager extension (Cookie-Editor, EditThisCookie, etc.) for instagram.com. Only from your own
+            already signed-in browser, used to browse profiles you can already access. Stored locally, never shown
+            again.
           </div>
+          {error && <div className="error">{error}</div>}
           <button disabled={busy || !cookie.trim()} onClick={() => void save()}>
             {busy ? 'Saving…' : 'Save session'}
           </button>

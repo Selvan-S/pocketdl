@@ -277,7 +277,7 @@ class InstagramSessionRequest(BaseModel):
     stored, never echoed back by any response -- see
     InstagramSessionStatusResponse."""
 
-    cookie_header: str = Field(min_length=1, max_length=8000)
+    cookie_header: str = Field(min_length=1, max_length=20000)
 
 
 class InstagramSessionStatusResponse(BaseModel):
