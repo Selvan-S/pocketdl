@@ -45,6 +45,7 @@ pnpm-debug.log*
 *.sqlite
 *.sqlite3
 *.log
+*_session_cookies.txt
 
 # PocketDL temporary files
 /tmp/
