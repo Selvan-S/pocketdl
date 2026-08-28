@@ -117,35 +117,61 @@ def test_collect_posts_with_no_range_returns_everything_under_the_cap(tmp_path: 
     assert len(previews) == 2
 
 
-def test_collect_posts_caps_item_count_when_no_since_bound_is_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collect_posts_stops_at_the_page_limit(tmp_path: Path) -> None:
     # Regression: live-verified as the dominant cause of a preview call
-    # taking 5+ minutes -- with no `since` to stop at naturally,
-    # instaloader's get_reels()/get_posts() would otherwise page through an
+    # taking 5+ minutes -- with nothing to stop at, get_posts() pages an
     # active profile's entire history, one HTTP request per page.
-    import app.infrastructure.instaloader_service as instaloader_service_module
-    monkeypatch.setattr(instaloader_service_module, '_MAX_ITEMS_WITHOUT_DATE_RANGE', 3)
-
     def infinite_posts():
         index = 0
         while True:
             yield _fake_post(f'post-{index}', datetime(2026, 1, 1, tzinfo=timezone.utc))
             index += 1
 
-    previews = InstaloaderService._collect_posts(infinite_posts(), InstagramContentType.POST, None, None)
+    previews = InstaloaderService._collect_posts(
+        infinite_posts(), InstagramContentType.POST, None, None, limit=3,
+    )
 
     assert len(previews) == 3
 
 
-def test_collect_posts_does_not_cap_when_since_is_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.infrastructure.instaloader_service as instaloader_service_module
-    monkeypatch.setattr(instaloader_service_module, '_MAX_ITEMS_WITHOUT_DATE_RANGE', 2)
-
+def test_collect_posts_applies_the_limit_even_with_a_date_range(tmp_path: Path) -> None:
+    # Behaviour change: the cap used to apply only when `since` was absent,
+    # on the theory that a date range bounds the work by itself. It does not
+    # -- "everything since 2019" is an unbounded walk of a whole profile in
+    # one request. The limit now always applies and the caller pages instead.
     posts = [_fake_post(f'post-{i}', datetime(2026, 3, 1, tzinfo=timezone.utc)) for i in range(5)]
     since = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-    previews = InstaloaderService._collect_posts(posts, InstagramContentType.POST, since, None)
+    previews = InstaloaderService._collect_posts(
+        posts, InstagramContentType.POST, since, None, limit=2,
+    )
 
-    assert len(previews) == 5
+    assert len(previews) == 2
+
+
+def test_collect_posts_bounds_how_far_it_scans_when_a_filter_rejects_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A narrow `until` on an inactive profile matches nothing, so the page
+    # never fills -- without a scan ceiling that walks the whole history.
+    import app.infrastructure.instaloader_service as mod
+
+    monkeypatch.setattr(mod, '_MAX_ITEMS_SCANNED', 10)
+    scanned = 0
+
+    def infinite_posts():
+        nonlocal scanned
+        while True:
+            scanned += 1
+            yield _fake_post(f'post-{scanned}', datetime(2026, 3, 1, tzinfo=timezone.utc))
+
+    previews = InstaloaderService._collect_posts(
+        infinite_posts(), InstagramContentType.POST, None,
+        datetime(2020, 1, 1, tzinfo=timezone.utc), limit=50,
+    )
+
+    assert previews == []
+    assert scanned <= 11
 
 
 def test_post_to_preview_maps_fields_correctly(tmp_path: Path) -> None:
@@ -777,18 +803,18 @@ async def test_reels_are_returned_even_when_the_timeline_has_none(
     monkeypatch.setattr(instaloader.Profile, 'from_username', staticmethod(lambda context, username: profile))
     monkeypatch.setattr(
         InstaloaderService, '_collect_reels',
-        lambda self, loader, prof, since, until: [
+        lambda self, loader, prof, since, until, limit=50: [
             InstaloaderService._reel_to_preview(
                 _reel_media('reel1', _pk_for(datetime(2026, 8, 23, tzinfo=timezone.utc))), prof.username,
             ),
         ],
     )
 
-    items = await service.list_profile_items(
+    page = await service.list_profile_items(
         'https://www.instagram.com/someuser/', [InstagramContentType.REEL],
     )
 
-    assert [i.external_id for i in items] == ['reel1']
+    assert [i.external_id for i in page.items] == ['reel1']
     # And it must not have paged the grid at all to find them.
     assert profile.get_posts_calls == 0
 
@@ -819,7 +845,7 @@ def test_collect_reels_caps_when_no_date_range_is_given(
 ) -> None:
     import app.infrastructure.instaloader_service as mod
 
-    monkeypatch.setattr(mod, '_MAX_ITEMS_WITHOUT_DATE_RANGE', 3)
+    monkeypatch.setattr(mod, '_DEFAULT_PAGE_SIZE', 3)
     service = _make_service(tmp_path)
     when = datetime(2026, 8, 20, tzinfo=timezone.utc)
     consumed = 0
@@ -832,7 +858,7 @@ def test_collect_reels_caps_when_no_date_range_is_given(
 
     monkeypatch.setattr(mod.instaloader, 'NodeIterator', lambda **kwargs: endless())
 
-    previews = service._collect_reels(SimpleNamespace(context=object()), _ReelsProfile(), None, None)
+    previews = service._collect_reels(SimpleNamespace(context=object()), _ReelsProfile(), None, None, 3)
 
     assert len(previews) == 3
     assert consumed <= 4
@@ -1165,3 +1191,88 @@ def test_reel_preview_uses_a_small_rendition(tmp_path: Path) -> None:
     preview = InstaloaderService._reel_to_preview(media, 'someuser')
 
     assert preview.thumbnail_url == 'https://cdn.example/320x568.jpg'
+
+
+# --- P2: paging a profile instead of silently truncating it ---
+
+
+def test_page_cursor_is_the_oldest_item(tmp_path: Path) -> None:
+    from app.infrastructure.instaloader_service import ProfileItemPage
+
+    def at(day: int):
+        return _fake_timeline_post(f'i{day}', datetime(2026, 8, day, tzinfo=timezone.utc))
+
+    page = ProfileItemPage(
+        items=[
+            InstaloaderService._post_to_preview(at(20), InstagramContentType.POST, 'u'),
+            InstaloaderService._post_to_preview(at(12), InstagramContentType.POST, 'u'),
+            InstaloaderService._post_to_preview(at(18), InstagramContentType.POST, 'u'),
+        ],
+        has_more=True,
+    )
+
+    # The oldest, not the last -- pinned posts break feed ordering, so
+    # "the last one I saw" would skip everything between.
+    assert page.next_posted_before == datetime(2026, 8, 12, tzinfo=timezone.utc)
+
+
+def test_page_cursor_is_none_when_there_is_nothing_to_page_from(tmp_path: Path) -> None:
+    from app.infrastructure.instaloader_service import ProfileItemPage
+
+    assert ProfileItemPage(items=[], has_more=False).next_posted_before is None
+
+
+@pytest.mark.asyncio
+async def test_has_more_is_true_when_a_bucket_fills_its_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _make_service(tmp_path)
+    day = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    profile = _TimelineProfile([_fake_timeline_post(f'i{n}', day) for n in range(10)])
+    monkeypatch.setattr(instaloader.Profile, 'from_username', staticmethod(lambda context, username: profile))
+
+    page = await service.list_profile_items(
+        'https://www.instagram.com/someuser/', [InstagramContentType.POST], limit=4,
+    )
+
+    assert len(page.items) == 4
+    assert page.has_more is True
+
+
+@pytest.mark.asyncio
+async def test_has_more_is_false_when_the_feed_runs_out_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The distinction that makes "Load more" trustworthy: it must be offered
+    # only when there really is something behind the page.
+    service = _make_service(tmp_path)
+    day = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    profile = _TimelineProfile([_fake_timeline_post(f'i{n}', day) for n in range(3)])
+    monkeypatch.setattr(instaloader.Profile, 'from_username', staticmethod(lambda context, username: profile))
+
+    page = await service.list_profile_items(
+        'https://www.instagram.com/someuser/', [InstagramContentType.POST], limit=10,
+    )
+
+    assert len(page.items) == 3
+    assert page.has_more is False
+
+
+@pytest.mark.asyncio
+async def test_page_size_is_clamped_to_the_maximum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.infrastructure.instaloader_service as mod
+
+    captured: list[int] = []
+    monkeypatch.setattr(mod, '_MAX_PAGE_SIZE', 5)
+    monkeypatch.setattr(
+        InstaloaderService, '_list_profile_items_sync',
+        lambda self, url, types, since, until, limit: captured.append(limit) or mod.ProfileItemPage([], False),
+    )
+
+    service = _make_service(tmp_path)
+    await service.list_profile_items('https://www.instagram.com/someuser/', [InstagramContentType.POST], limit=9999)
+    await service.list_profile_items('https://www.instagram.com/someuser/', [InstagramContentType.POST], limit=0)
+
+    assert captured == [5, 1]

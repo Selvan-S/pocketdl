@@ -14,6 +14,8 @@ from .schemas import (
     CaptureDownloadRequest,
     CaptureResponse,
     CaptureVariantResponse,
+    CollectionAddProfileItemsRequest,
+    CollectionAddProfileItemsResponse,
     CollectionCreateRequest,
     CollectionDownloadRequest,
     CollectionItemAddRequest,
@@ -515,11 +517,12 @@ async def update_yt_dlp(request: Request) -> dict[str, object]:
 async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, request: Request) -> InstagramProfilePreviewResponse:
     service = request.app.state.profile_discovery_service
     try:
-        items = await service.preview(
+        page = await service.preview(
             payload.profile_url,
             [InstagramContentType(value) for value in payload.content_types],
             payload.posted_after,
             payload.posted_before,
+            payload.limit,
         )
     except InstagramAuthRequiredError as exc:
         logger.info('Instagram profile preview requires a session: %s (%s)', payload.profile_url, exc)
@@ -532,15 +535,58 @@ async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, req
         # durable trace of, so it's worth a real server-side log line.
         logger.warning('Instagram profile preview failed: %s (%s)', payload.profile_url, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return InstagramProfilePreviewResponse(items=[
-        ProfileItemPreviewResponse(
-            source_url=item.source_url, content_type=item.content_type, author_username=item.author_username,
-            profile_username=item.profile_username,
-            caption=item.caption, thumbnail_url=item.thumbnail_url, external_id=item.external_id,
-            posted_at=item.posted_at,
+    return InstagramProfilePreviewResponse(
+        items=[_preview_response(item) for item in page.items],
+        has_more=page.has_more,
+        next_posted_before=page.next_posted_before,
+    )
+
+
+def _preview_response(item: ProfileItemPreview) -> ProfileItemPreviewResponse:
+    return ProfileItemPreviewResponse(
+        source_url=item.source_url, content_type=item.content_type, author_username=item.author_username,
+        profile_username=item.profile_username, caption=item.caption, thumbnail_url=item.thumbnail_url,
+        external_id=item.external_id, posted_at=item.posted_at,
+    )
+
+
+@router.post('/collections/{collection_id}/profile-items', response_model=CollectionAddProfileItemsResponse)
+async def add_profile_items_to_collection(
+    collection_id: str, payload: CollectionAddProfileItemsRequest, request: Request,
+) -> CollectionAddProfileItemsResponse:
+    """Add every item matching a profile query, without previewing it first.
+
+    Selecting a whole profile otherwise meant paging through it by hand and
+    holding every card on screen just to tick them.
+    """
+    discovery = request.app.state.profile_discovery_service
+    collections: CollectionService = request.app.state.collection_service
+    if await collections.get_collection(collection_id) is None:
+        raise HTTPException(status_code=404, detail='Collection not found.')
+
+    try:
+        page = await discovery.preview(
+            payload.profile_url,
+            [InstagramContentType(value) for value in payload.content_types],
+            payload.posted_after,
+            payload.posted_before,
+            payload.limit,
         )
-        for item in items
-    ])
+    except InstagramAuthRequiredError as exc:
+        raise HTTPException(status_code=401, detail=f'Instagram session required: {exc}') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.warning('Instagram bulk add failed: %s (%s)', payload.profile_url, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    added, already_present = await collections.add_items(collection_id, page.items)
+    return CollectionAddProfileItemsResponse(
+        added=added,
+        already_present=already_present,
+        has_more=page.has_more,
+        next_posted_before=page.next_posted_before,
+    )
 
 
 @router.get('/instagram/session', response_model=InstagramSessionStatusResponse)

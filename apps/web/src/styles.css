@@ -400,6 +400,20 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 .instagram-item-date { font-size: 11px; color: #7f8da8; }
 .instagram-item-caption { font-size: 11px; color: #8390a9; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
+/* Header above the preview grid: how much is loaded, how much is selected,
+   and the select-all toggle. */
+.instagram-results-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: #7f8da8;
+  font-size: 12px;
+}
+.instagram-load-more { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.instagram-load-more .field-help { margin-top: 0; flex: 1; min-width: 200px; }
+
 .instagram-add-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .instagram-add-row select, .instagram-add-row input { flex: 1; min-width: 160px; }
 .instagram-add-row button { white-space: nowrap; }

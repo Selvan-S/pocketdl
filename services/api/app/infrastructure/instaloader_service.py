@@ -113,6 +113,39 @@ class InstaloaderTimeoutError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileItemPage:
+    """One page of profile items, plus what a caller needs to ask for the
+    next one.
+
+    `has_more` is only ever true because a bucket filled its page -- never
+    because a scan ceiling was hit or a feed ran out -- so "load more" is
+    offered exactly when there really is more.
+    """
+
+    items: list[ProfileItemPreview]
+    has_more: bool
+
+    @property
+    def next_posted_before(self) -> datetime | None:
+        """Cursor for the following page: the oldest item on this one.
+
+        A date rather than an opaque iterator handle. instaloader can freeze
+        and thaw a NodeIterator, but that state expires, has to be carried
+        across restarts, and has to be rebuilt identically to be usable --
+        whereas both feeds here are already reverse-chronological and the
+        code already filters on `until`, so a date reuses machinery that
+        exists and is verified. The cost is that page N re-scans the N-1
+        pages above it; the mitigation is that a caller wanting a lot of
+        items should ask for one big page instead (see _MAX_PAGE_SIZE).
+
+        Callers must de-duplicate by external_id when appending: items
+        sharing a timestamp with the last of this page can reappear.
+        """
+        dated = [item.posted_at for item in self.items if item.posted_at is not None]
+        return min(dated) if dated else None
+
+
+@dataclass(frozen=True, slots=True)
 class DownloadResult:
     """What a completed download learned on the way.
 
@@ -131,7 +164,13 @@ class DownloadResult:
 # pagination early -- an active profile's full post/reel history can be
 # dozens of pages. Cap to a recent window instead; explicitly narrowing
 # the date range still works via the ordinary early-break above this.
-_MAX_ITEMS_WITHOUT_DATE_RANGE = 50
+_DEFAULT_PAGE_SIZE = 50
+# A "load more" page costs a full re-scan from the top of the feed (see
+# ProfileDiscoveryService for why the cursor is a date rather than an opaque
+# iterator handle), so a caller wanting a lot of items is better served by
+# asking for a big page once than by paging repeatedly. Bounded so one
+# request still fits inside the overall timeout.
+_MAX_PAGE_SIZE = 200
 
 # Reels are read by filtering the ordinary profile timeline rather than by
 # instaloader's own `Profile.get_reels()` -- see `_collect_posts`. Filtering
@@ -140,13 +179,23 @@ _MAX_ITEMS_WITHOUT_DATE_RANGE = 50
 # that posts rarely-but-not-never in video form would page through its whole
 # history looking for reels that aren't there.
 #
-# Sized against _OVERALL_TIMEOUT_SECONDS rather than picked round: the
-# timeline returns 12 items per request, and a request plus instaloader's
-# rate-limit courtesy sleep was measured live at ~3.5s, so 200 posts is
-# ~17 requests is ~60s -- inside the 90s budget with margin. Raising this
-# without raising the timeout would just turn a truncated result into a
-# timeout, which is strictly worse.
-_MAX_POSTS_SCANNED = 200
+# Ceiling on how far into a feed one request will read, independent of how
+# many items it keeps. Matters when a filter rejects most of what it sees --
+# without it, a narrow date range on an inactive profile would page that
+# profile's whole history looking for matches that aren't there.
+#
+# Sized against _OVERALL_TIMEOUT_SECONDS rather than picked round: a feed
+# returns 12 items per request, and a request plus instaloader's rate-limit
+# courtesy sleep was measured live at ~3.5s, so 600 items is ~50 requests is
+# ~175s. That exceeds the default budget on purpose -- a large page raises
+# the timeout to match (see list_profile_items), and a default-sized page
+# stops at _DEFAULT_PAGE_SIZE long before reaching here.
+_MAX_ITEMS_SCANNED = 600
+
+# Extra time budget for a large page. The default 90s covers a 50-item page
+# comfortably; a 200-item one needs more, and a request that is going to take
+# a while is better than one that fails at 90s having done the work.
+_LARGE_PAGE_TIMEOUT_SECONDS = 240.0
 
 # Instagram's own `product_type` discriminator on a timeline media struct.
 # 'clips' is what the app calls a Reel; 'feed' is an ordinary post and
@@ -357,6 +406,7 @@ class InstaloaderService:
         since: datetime | None,
         until: datetime | None,
         profile_username: str | None = None,
+        limit: int = _DEFAULT_PAGE_SIZE,
     ) -> list[ProfileItemPreview]:
         """Read the profile timeline (the grid). Reels are NOT sourced from
         here -- see _collect_reels for why the two are separate."""
@@ -364,7 +414,7 @@ class InstaloaderService:
         scanned = 0
         for post in posts:
             scanned += 1
-            if scanned > _MAX_POSTS_SCANNED:
+            if scanned > _MAX_ITEMS_SCANNED:
                 break
 
             post_date = post.date_utc.replace(tzinfo=timezone.utc)
@@ -379,14 +429,15 @@ class InstaloaderService:
                 # instead of paging through a profile's entire history.
                 break
             previews.append(InstaloaderService._post_to_preview(post, bucket, profile_username))
-            if since is None and len(previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE:
-                # No lower date bound to stop at naturally -- live-verified
-                # as the dominant cause of a preview taking minutes, since
-                # get_posts() will otherwise page an active profile's
-                # *entire* history, one request plus a rate-limit courtesy
-                # sleep (sleep=True) per page. Cap to a recent window for
-                # interactive browsing; a real date range still overrides
-                # this via the `break` above.
+            if len(previews) >= limit:
+                # A full page. The caller turns this into a cursor and can
+                # ask for the next one -- unlike the old behaviour, which
+                # silently truncated here and gave no way to see the rest.
+                #
+                # The limit applies even with a date range: "everything since
+                # 2019" is otherwise an unbounded walk of a profile's whole
+                # history in one request, which is how this took minutes
+                # before.
                 break
         return previews
 
@@ -451,6 +502,7 @@ class InstaloaderService:
         profile: instaloader.Profile,
         since: datetime | None,
         until: datetime | None,
+        limit: int = _DEFAULT_PAGE_SIZE,
     ) -> list[ProfileItemPreview]:
         """Page the reels connection directly, building previews from the raw
         media struct rather than letting instaloader refetch each reel."""
@@ -471,7 +523,11 @@ class InstaloaderService:
         )
 
         previews: list[ProfileItemPreview] = []
+        scanned = 0
         for media in iterator:
+            scanned += 1
+            if scanned > _MAX_ITEMS_SCANNED:
+                break
             preview = self._reel_to_preview(media, profile.username)
             if preview is None or preview.posted_at is None:
                 continue
@@ -484,7 +540,7 @@ class InstaloaderService:
                     continue
                 break
             previews.append(preview)
-            if since is None and len(previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE:
+            if len(previews) >= limit:
                 break
         return previews
 
@@ -540,7 +596,8 @@ class InstaloaderService:
         content_types: list[InstagramContentType],
         since: datetime | None,
         until: datetime | None,
-    ) -> list[ProfileItemPreview]:
+        limit: int,
+    ) -> ProfileItemPage:
         loader = self._build_loader()
         username = self._profile_username(profile_url)
 
@@ -554,6 +611,7 @@ class InstaloaderService:
             raise RuntimeError(f'Could not reach Instagram: {exc}') from exc
 
         previews: list[ProfileItemPreview] = []
+        has_more = False
         seen_buckets: set[InstagramContentType] = set()
         for content_type in content_types:
             bucket = InstagramContentType.POST if content_type is InstagramContentType.CAROUSEL else content_type
@@ -563,15 +621,23 @@ class InstaloaderService:
 
             try:
                 if bucket is InstagramContentType.STORY:
+                    # Stories and highlights are small, bounded sets (a
+                    # profile has at most a day's stories and a handful of
+                    # highlights), so they are never paged.
                     previews.extend(self._collect_stories(loader, profile))
                 elif bucket is InstagramContentType.HIGHLIGHT:
                     previews.extend(self._collect_highlights(loader, profile))
-                elif bucket is InstagramContentType.REEL:
-                    previews.extend(self._collect_reels(loader, profile, since, until))
                 else:
-                    previews.extend(
-                        self._collect_posts(profile.get_posts(), bucket, since, until, profile.username),
-                    )
+                    if bucket is InstagramContentType.REEL:
+                        page = self._collect_reels(loader, profile, since, until, limit)
+                    else:
+                        page = self._collect_posts(
+                            profile.get_posts(), bucket, since, until, profile.username, limit,
+                        )
+                    # A bucket that exactly filled its page is the only
+                    # reason to believe there is more behind it.
+                    has_more = has_more or len(page) >= limit
+                    previews.extend(page)
             except instaloader.LoginRequiredException as exc:
                 raise InstagramAuthRequiredError(f'Instagram requires a session to view this content: {exc}') from exc
             except instaloader.PrivateProfileNotFollowedException as exc:
@@ -583,7 +649,7 @@ class InstaloaderService:
             except instaloader.ConnectionException as exc:
                 raise RuntimeError(f'Could not reach Instagram: {exc}') from exc
 
-        return previews
+        return ProfileItemPage(items=previews, has_more=has_more)
 
     async def list_profile_items(
         self,
@@ -591,16 +657,22 @@ class InstaloaderService:
         content_types: list[InstagramContentType],
         since: datetime | None = None,
         until: datetime | None = None,
-    ) -> list[ProfileItemPreview]:
+        limit: int = _DEFAULT_PAGE_SIZE,
+    ) -> ProfileItemPage:
+        limit = max(1, min(limit, _MAX_PAGE_SIZE))
+        # A bigger page is more requests, so it gets proportionally longer --
+        # otherwise asking for 200 items would reliably fail at 90s having
+        # already done most of the work.
+        timeout = _OVERALL_TIMEOUT_SECONDS if limit <= _DEFAULT_PAGE_SIZE else _LARGE_PAGE_TIMEOUT_SECONDS
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._list_profile_items_sync, profile_url, content_types, since, until),
-                timeout=_OVERALL_TIMEOUT_SECONDS,
+                asyncio.to_thread(self._list_profile_items_sync, profile_url, content_types, since, until, limit),
+                timeout=timeout,
             )
         except asyncio.TimeoutError as exc:
             raise InstaloaderTimeoutError(
-                f'Instagram did not respond within {_OVERALL_TIMEOUT_SECONDS:.0f}s. It may be rate-limiting this '
-                'session or temporarily slow -- try again shortly.',
+                f'Instagram did not respond within {timeout:.0f}s. It may be rate-limiting this '
+                'session or temporarily slow -- try again shortly, or ask for fewer items.',
             ) from exc
 
     def _target_directory(self, username: str | None, content_type: str | None) -> Path:

@@ -890,6 +890,96 @@ it drive a real page.
 
 251 backend tests pass (up from 235).
 
+### Round 9 — selecting a whole profile, and two playlist UI bugs (done)
+Reported after using Round 8: a profile with 128 reels only ever showed 50,
+with no way to reach the rest; adding to a playlist reported success while
+the playlist showed nothing; and creating a new playlist became impossible
+after deleting one.
+
+#### 1. Results truncated at 50 with no way to see the rest
+`_MAX_ITEMS_WITHOUT_DATE_RANGE` cut every result at 50 and said nothing.
+The user asked whether previewing should be gated behind a date filter
+instead -- it should not: a date range can exceed 50 just as easily, so
+gating would trade a silent cap for a mandatory guess.
+
+Three changes instead:
+
+- **The cap became a page size.** `limit` (default 50, max 200) always
+  applies, and the response now carries `has_more` -- true only when a
+  content type exactly filled its page, never because a scan ceiling was hit
+  or a feed ran out, so "Load older items" appears exactly when there really
+  is more. Note this also *changed* behaviour: the cap previously applied
+  only when no `since` was given, on the theory that a date range bounds the
+  work by itself. It does not -- "everything since 2019" is an unbounded walk
+  of a whole profile in one request.
+- **The cursor is a date, not an opaque handle.** instaloader can
+  `freeze()`/`thaw()` a `NodeIterator`, but that state expires, has to be
+  carried across restarts, and has to be rebuilt identically to be usable.
+  Both feeds here are already reverse-chronological and the code already
+  filters on `until`, so the next page is simply "older than the oldest item
+  I have" -- reusing machinery that exists and is verified. The cost is that
+  page N re-scans the N-1 pages above it, and that an item sharing a
+  timestamp with the last of a page can reappear, so callers de-duplicate by
+  `external_id`. The cursor is the *oldest* item, not the last one, because
+  pinned posts break feed ordering.
+- **`POST /api/collections/{id}/profile-items` adds everything matching, in
+  one call.** This is the real answer to "how do I select 128 reels": you
+  should not have to render 128 cards to tick them. It runs the same query
+  server-side up to 200 items and adds what it matches, reporting `added`,
+  `already_present`, and `has_more` so a truncated bulk add says so instead
+  of quietly adding a subset.
+
+A large page raises its own timeout (240s vs the default 90s), since
+otherwise asking for 200 items would reliably fail at 90s having already
+done most of the work.
+
+**Live-verified on the reported profile:** page 1 returned 50 reels in 20.5s
+with `has_more=true`; the cursor fetched 50 more in 31.1s, 49 new after
+de-duplication and 1 expected overlap; and a single bulk add took **40.8s to
+add all 128 reels** with `has_more=false`, confirming the user's own count.
+Running it again added 0 and reported 128 already present.
+
+#### 2. A playlist showed nothing after items were added to it
+`PlaylistCard` fetched its item list once, on first expand, and cached it in
+component state forever. Adding items afterwards refreshed the header count
+but not the list underneath -- so "Added 50 item(s)" was followed by an empty
+playlist, and there was no way to see what "Download all" would act on.
+
+It now re-fetches when the server's count differs from the count the list was
+last loaded for. Keyed on the count rather than compared against
+`items.length` deliberately: if the two ever disagreed persistently,
+comparing lengths would re-fetch on every render forever.
+
+`CollectionService.add_items` also now reports `added` and `already_present`
+separately, so a bulk add can no longer claim to have added items the
+playlist already held -- which is what made the original report confusing.
+
+#### 3. "New playlist" stopped offering a name field
+After adding, the panel pins its playlist selector to the playlist just used.
+Deleting that playlist left the selector holding an id that no longer
+existed: the `<select>` fell back to *displaying* its first option ("New
+playlist...") while the state still said otherwise, so `{!targetCollectionId
+&& <input/>}` never rendered and there was no way to create a playlist at
+all. The selection is now cleared whenever it no longer matches a known
+playlist.
+
+#### Also
+- **Select all / clear selection** on the loaded results, deliberately scoped
+  to what is on screen -- selecting items the user has not seen is what "Add
+  all matching" is for, and that runs server-side rather than pretending a
+  hidden page is loaded.
+- The user reported seeing "101" in the network tab and asked whether that
+  was the event stream. It is not: 101 is a protocol upgrade, which is Vite's
+  own dev-server HMR socket. PocketDL's stream is a plain `200` with
+  `text/event-stream` that stays open.
+
+266 backend tests pass (up from 252).
+
+**Not machine-verified:** the three UI behaviours above are frontend-only and
+there is no browser automation in this environment. The build and typecheck
+are clean and the logic was traced by reading, but nobody has watched them in
+a real page.
+
 ### What's left
 - **Stories and Highlights have still never been live-verified**, and
   `_collect_stories`/`_collect_highlights` still call
@@ -898,19 +988,20 @@ it drive a real page.
 - **Only public profiles tested.** A private profile the session follows,
   and one it does not, still need checking for correct
   `InstagramAuthRequiredError` classification.
-- **Silent truncation.** `_MAX_ITEMS_WITHOUT_DATE_RANGE` (50) and
-  `_MAX_POSTS_SCANNED` (200) cut results with no signal to the user and no
-  way to ask for more. `NodeIterator.freeze()`/`thaw()` is the primitive for
-  a real resumable cursor; the API should report "N shown, more available".
+- **Bulk add stops at 200.** Beyond that the only route is narrowing the
+  date range; the response says so rather than truncating silently, but a
+  profile with thousands of items still cannot be taken in one action.
 - **UI responsiveness** is addressed in Round 8 above, but only the
   server side is verified -- whether the page actually feels better is
   still unconfirmed by anyone but the user. A backend thumbnail proxy was
   considered and *not* built: it would not lift the browser's
   per-host connection cap, and picking a smaller rendition removed 94% of
   the bytes without adding an SSRF-shaped endpoint.
-- **Playlist UX**: no select-all in preview, and no way to filter or group a
-  playlist by content type or download state, so a playlist mixing
-  already-downloaded posts with newly-added highlights is hard to act on.
+- **Playlist UX**: no way to filter or group a playlist by content type or
+  download state, so a playlist mixing already-downloaded posts with
+  newly-added highlights is still hard to act on. Playlists are also absent
+  from the SSE snapshot, so their counts only refresh after an action rather
+  than live.
 - Merging the pilot to `main`.
 
 ### Resuming this work

@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Instagram: reach every item in a profile, and two playlist UI fixes
+- **Results no longer stop at 50 with no way to see the rest.** The cap is
+  now a page size (default 50, max 200) and the response reports `has_more`
+  plus a cursor, so the UI offers "Load older items" exactly when there is
+  more. The cursor is a date -- both feeds are reverse-chronological and the
+  code already filters on `posted_before` -- rather than an opaque iterator
+  handle that would expire and need rebuilding. Behaviour change: the cap
+  used to apply only when no start date was given; it now always applies,
+  because a date range does not bound the work ("everything since 2019" is
+  a whole-profile walk).
+- **New `POST /api/collections/{id}/profile-items` adds everything a query
+  matches in one call**, without loading it into the page first -- the answer
+  to selecting a profile with 128 reels. Reports `added`, `already_present`
+  and `has_more`, so a truncated bulk add says so. Verified live: 128 reels
+  added in a single 40.8s call.
+- **Select all / clear selection** over the loaded results.
+- **Fixed: a playlist showed nothing after items were added to it.** The item
+  list was fetched once on first expand and cached forever, so the header
+  count updated while the list underneath did not -- leaving no way to see
+  what "Download all" would act on.
+- **Fixed: "New playlist" stopped offering a name field.** Deleting the
+  playlist the panel had auto-selected left the selector holding a dangling
+  id, which hid the name input while the dropdown appeared to show "New
+  playlist…". The selection is now cleared when it no longer exists.
+
 ### UI responsiveness: stop shipping full-size images and stop polling
 The reported slowness had three causes, and the preview request's own
 latency was not one of them.

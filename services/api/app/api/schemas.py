@@ -250,7 +250,16 @@ class InstagramProfilePreviewRequest(BaseModel):
     # Only applied to posts/reels -- stories/highlights aren't meaningfully
     # date-bounded browsing, see InstaloaderService._collect_posts.
     posted_after: datetime | None = None
+    # Doubles as the paging cursor: ask again with the oldest posted_at you
+    # already have to get the page behind it. See
+    # InstaloaderService.ProfileItemPage.next_posted_before for why the
+    # cursor is a date rather than an opaque handle.
     posted_before: datetime | None = None
+    # Omitted means the default page size. Raising it costs proportionally
+    # more requests to Instagram and is clamped server-side, but is much
+    # cheaper than paging repeatedly, since each page re-scans the ones
+    # above it.
+    limit: int | None = Field(default=None, ge=1, le=200)
 
     @field_validator('profile_url')
     @classmethod
@@ -281,6 +290,33 @@ class ProfileItemPreviewResponse(BaseModel):
 
 class InstagramProfilePreviewResponse(BaseModel):
     items: list[ProfileItemPreviewResponse]
+    # True when a bucket exactly filled its page, i.e. there is genuinely
+    # more behind this. Previously the result was silently truncated with no
+    # way to tell, and no way to ask for the rest.
+    has_more: bool = False
+    # Pass back as `posted_before` to fetch the next page. Null when this
+    # page is the end. Callers must de-duplicate by external_id, since items
+    # sharing a timestamp with the last of this page can reappear.
+    next_posted_before: datetime | None = None
+
+
+class CollectionAddProfileItemsRequest(InstagramProfilePreviewRequest):
+    """Run a profile query server-side and add everything it matches.
+
+    The point is that choosing "all of it" should not require rendering all
+    of it first: a profile with 128 reels needed three manual pages and 128
+    cards on screen before the user could select them.
+    """
+
+
+class CollectionAddProfileItemsResponse(BaseModel):
+    added: int
+    already_present: int
+    # True when the query filled its page, i.e. items matching the filters
+    # were left behind. Reported rather than hidden so the UI can say so and
+    # suggest narrowing the date range.
+    has_more: bool
+    next_posted_before: datetime | None = None
 
 
 class InstagramSessionRequest(BaseModel):

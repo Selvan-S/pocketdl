@@ -4,6 +4,7 @@ import type {
   CaptureDownloadRequest,
   CaptureItem,
   Collection,
+  CollectionAddProfileItemsResponse,
   CollectionDownloadRequest,
   CollectionItem,
   DownloadCreateRequest,
@@ -87,6 +88,11 @@ export const api = {
   renameCollection: (id: string, name: string) => request<Collection>(`/collections/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
   deleteCollection: (id: string) => request<{ ok: true }>(`/collections/${id}`, { method: 'DELETE' }),
   listCollectionItems: (id: string) => request<CollectionItem[]>(`/collections/${id}/items`),
+  addProfileItemsToCollection: (id: string, payload: InstagramProfilePreviewRequest) =>
+    request<CollectionAddProfileItemsResponse>(`/collections/${id}/profile-items`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   addCollectionItem: (id: string, preview: ProfileItemPreview) =>
     request<CollectionItem>(`/collections/${id}/items`, { method: 'POST', body: JSON.stringify(preview) }),
   removeCollectionItem: (id: string, itemId: string) => request<{ ok: true }>(`/collections/${id}/items/${itemId}`, { method: 'DELETE' }),

@@ -154,7 +154,13 @@ export interface InstagramProfilePreviewRequest {
   /** ISO datetime strings. Only applied to posts/reels -- stories/highlights
    * aren't meaningfully date-bounded, see InstaloaderService. */
   posted_after?: string;
+  /** Doubles as the paging cursor -- pass the oldest posted_at you already
+   * have to get the page behind it. */
   posted_before?: string;
+  /** Page size. Omitted means the server default (50); a larger page costs
+   * proportionally more requests to Instagram but far less than paging
+   * repeatedly, since each page re-scans the ones above it. */
+  limit?: number;
 }
 
 export interface ProfileItemPreview {
@@ -173,6 +179,19 @@ export interface ProfileItemPreview {
 
 export interface InstagramProfilePreviewResponse {
   items: ProfileItemPreview[];
+  /** True when a content type exactly filled its page, i.e. there is more
+   * behind this. */
+  has_more: boolean;
+  /** Pass back as `posted_before` to fetch the page behind this one. Null
+   * when this is the end. */
+  next_posted_before: string | null;
+}
+
+export interface CollectionAddProfileItemsResponse {
+  added: number;
+  already_present: number;
+  has_more: boolean;
+  next_posted_before: string | null;
 }
 
 export interface InstagramSessionStatus {

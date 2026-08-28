@@ -65,6 +65,30 @@ class CollectionService:
         )
         return await self.repository.add_item(item)
 
+    async def add_items(self, collection_id: str, previews: list[ProfileItemPreview]) -> tuple[int, int]:
+        """Add many previews at once, returning (added, already_present).
+
+        Adding is idempotent at the repository level (one row per piece of
+        content per collection), so this reports how many were genuinely new
+        rather than silently claiming to have added items the playlist
+        already held -- which is what "Added 50" followed by an unchanged
+        list looked like before.
+        """
+        existing = {
+            item.external_id or item.source_url
+            for item in await self.repository.list_items(collection_id)
+        }
+        added = 0
+        already_present = 0
+        for preview in previews:
+            if (preview.external_id or preview.source_url) in existing:
+                already_present += 1
+                continue
+            await self.add_item(collection_id, preview)
+            existing.add(preview.external_id or preview.source_url)
+            added += 1
+        return added, already_present
+
     async def remove_item(self, collection_id: str, item_id: str) -> None:
         await self.repository.remove_item(collection_id, item_id)
 

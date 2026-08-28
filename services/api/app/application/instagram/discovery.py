@@ -1,7 +1,8 @@
 from datetime import datetime
 from urllib.parse import urlparse
 
-from ...domain.collections import InstagramContentType, ProfileItemPreview
+from ...domain.collections import InstagramContentType
+from ...infrastructure.instaloader_service import ProfileItemPage
 from ...infrastructure.instaloader_service import InstaloaderService
 
 
@@ -32,12 +33,22 @@ class ProfileDiscoveryService:
         content_types: list[InstagramContentType],
         since: datetime | None = None,
         until: datetime | None = None,
-    ) -> list[ProfileItemPreview]:
+        limit: int | None = None,
+    ) -> ProfileItemPage:
+        """One page of a profile's items.
+
+        `until` doubles as the paging cursor: both feeds are
+        reverse-chronological, so "the next page" is "older than the oldest
+        item I already have" -- see ProfileItemPage.next_posted_before for
+        why that is a date rather than an opaque iterator handle.
+        """
         self._validate_profile_url(profile_url)
         if not content_types:
             raise ValueError('At least one content type must be requested.')
         self._validate_range(since, until)
-        return await self.instaloader_service.list_profile_items(profile_url, content_types, since, until)
+        if limit is None:
+            return await self.instaloader_service.list_profile_items(profile_url, content_types, since, until)
+        return await self.instaloader_service.list_profile_items(profile_url, content_types, since, until, limit)
 
     async def verify_session(self) -> str | None:
         """Returns the username the stored session cookie authenticates as,
