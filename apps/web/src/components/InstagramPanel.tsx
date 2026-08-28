@@ -316,7 +316,10 @@ function ProfileBrowser({
             Posted before
             <input type="date" value={postedBefore} onChange={(event) => setPostedBefore(event.target.value)} />
           </label>
-          <span className="field-help">Only applies to posts and reels -- stories and highlights aren&apos;t date-filterable.</span>
+          <span className="field-help">
+            Only applies to posts and reels -- stories and highlights aren&apos;t date-filterable. Without a start
+            date, results are capped to the most recent items so browsing an active profile stays fast.
+          </span>
         </div>
         <button disabled={loading || !profileUrl.trim() || selectedTypes.length === 0} onClick={() => void preview()}>
           {loading ? 'Loading…' : 'Preview profile'}

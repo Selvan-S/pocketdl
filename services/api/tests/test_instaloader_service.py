@@ -111,10 +111,41 @@ def test_collect_posts_skips_newer_than_until(tmp_path: Path) -> None:
     assert [p.external_id for p in previews] == ['in_range']
 
 
-def test_collect_posts_with_no_range_returns_everything(tmp_path: Path) -> None:
+def test_collect_posts_with_no_range_returns_everything_under_the_cap(tmp_path: Path) -> None:
     posts = [_fake_post('a', datetime(2026, 1, 1, tzinfo=timezone.utc)), _fake_post('b', datetime(2026, 2, 1, tzinfo=timezone.utc))]
     previews = InstaloaderService._collect_posts(posts, InstagramContentType.POST, None, None)
     assert len(previews) == 2
+
+
+def test_collect_posts_caps_item_count_when_no_since_bound_is_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: live-verified as the dominant cause of a preview call
+    # taking 5+ minutes -- with no `since` to stop at naturally,
+    # instaloader's get_reels()/get_posts() would otherwise page through an
+    # active profile's entire history, one HTTP request per page.
+    import app.infrastructure.instaloader_service as instaloader_service_module
+    monkeypatch.setattr(instaloader_service_module, '_MAX_ITEMS_WITHOUT_DATE_RANGE', 3)
+
+    def infinite_posts():
+        index = 0
+        while True:
+            yield _fake_post(f'post-{index}', datetime(2026, 1, 1, tzinfo=timezone.utc))
+            index += 1
+
+    previews = InstaloaderService._collect_posts(infinite_posts(), InstagramContentType.POST, None, None)
+
+    assert len(previews) == 3
+
+
+def test_collect_posts_does_not_cap_when_since_is_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.infrastructure.instaloader_service as instaloader_service_module
+    monkeypatch.setattr(instaloader_service_module, '_MAX_ITEMS_WITHOUT_DATE_RANGE', 2)
+
+    posts = [_fake_post(f'post-{i}', datetime(2026, 3, 1, tzinfo=timezone.utc)) for i in range(5)]
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    previews = InstaloaderService._collect_posts(posts, InstagramContentType.POST, since, None)
+
+    assert len(previews) == 5
 
 
 def test_post_to_preview_maps_fields_correctly(tmp_path: Path) -> None:
@@ -239,3 +270,64 @@ async def test_test_session_returns_none_when_cookie_does_not_authenticate(
     monkeypatch.setattr(instaloader.InstaloaderContext, 'test_login', lambda self: None)
 
     assert await service.test_session() is None
+
+
+@pytest.mark.asyncio
+async def test_list_profile_items_times_out_instead_of_hanging_indefinitely(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: instaloader's own default request_timeout is 300s per
+    # HTTP call with 3 retries on top -- live-verified to hang a real
+    # preview for 5+ minutes and stall the browser tab behind it. The
+    # overall wait_for wrapper must fire well before that.
+    import time as time_module
+
+    import app.infrastructure.instaloader_service as instaloader_service_module
+
+    service = _make_service(tmp_path)
+    monkeypatch.setattr(instaloader_service_module, '_OVERALL_TIMEOUT_SECONDS', 0.05)
+
+    def slow_from_username(context, username):
+        time_module.sleep(1)
+        raise instaloader.ProfileNotExistsException('should never get here')
+
+    monkeypatch.setattr(instaloader.Profile, 'from_username', staticmethod(slow_from_username))
+
+    with pytest.raises(instaloader_service_module.InstaloaderTimeoutError):
+        await service.list_profile_items('https://www.instagram.com/someuser/', [InstagramContentType.POST])
+
+
+@pytest.mark.asyncio
+async def test_test_session_returns_none_on_timeout_rather_than_hanging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time as time_module
+
+    import app.infrastructure.instaloader_service as instaloader_service_module
+
+    database = tmp_path / 'pocketdl.db'
+    save_session_cookie(database, 'instagram', '.instagram.com', 'sessionid=abc123')
+    service = InstaloaderService(_StubSettings(database, tmp_path / 'downloads'))  # type: ignore[arg-type]
+    monkeypatch.setattr(instaloader_service_module, '_OVERALL_TIMEOUT_SECONDS', 0.05)
+
+    def slow_test_login(self):
+        time_module.sleep(1)
+        return 'someuser'
+
+    monkeypatch.setattr(instaloader.InstaloaderContext, 'test_login', slow_test_login)
+
+    assert await service.test_session() is None
+
+
+def test_build_loader_uses_a_short_request_timeout_and_limited_retries(tmp_path: Path) -> None:
+    import app.infrastructure.instaloader_service as instaloader_service_module
+
+    service = _make_service(tmp_path)
+    loader = service._build_loader()
+
+    assert loader.context.request_timeout == instaloader_service_module._REQUEST_TIMEOUT_SECONDS
+    assert loader.context.max_connection_attempts == instaloader_service_module._MAX_CONNECTION_ATTEMPTS
+    # Regression: instaloader's own defaults are 300s and 3 attempts,
+    # which is what produced the 5+ minute hang this test guards against.
+    assert loader.context.request_timeout < 300
+    assert loader.context.max_connection_attempts < 3

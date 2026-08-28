@@ -36,6 +36,40 @@ _CONTENT_TYPE_FOLDERS = {
 # policy (see docs_POCKETDL_ROADMAP.md Phase 3).
 _FILENAME_PATTERN = '{shortcode}_{typename}'
 
+# instaloader's own default request_timeout is 300s (five minutes) *per HTTP
+# request*, with max_connection_attempts=3 retries on top -- live-verified
+# to actually hang a real preview call for 5+ minutes against a real
+# profile, stalling the browser tab behind it (see
+# docs_POCKETDL_ROADMAP.md Phase 5). A single Instagram request normally
+# completes in well under this; a slow/soft-blocked one should fail fast
+# and let the caller retry, not sit on an open connection indefinitely.
+_REQUEST_TIMEOUT_SECONDS = 20.0
+_MAX_CONNECTION_ATTEMPTS = 2
+# Outer safety net around the whole operation (asyncio.wait_for on the
+# to_thread call) -- a preview can make several sequential requests
+# (profile lookup, then one per requested content type), so this is a
+# multiple of the per-request timeout above, not equal to it. Does not
+# actually kill the underlying thread (Python threads cannot be forced to
+# stop), just stops the caller from waiting on it -- the orphaned request
+# finishes or fails on its own in the background.
+_OVERALL_TIMEOUT_SECONDS = 90.0
+# A download transfers real media bytes, not just metadata, so it gets a
+# much longer cap than a preview -- this only guards against a fully
+# stalled connection (the per-request timeout above already fails fast on
+# that), not against a large file legitimately taking a while.
+_DOWNLOAD_TIMEOUT_SECONDS = 600.0
+
+
+class InstaloaderTimeoutError(RuntimeError):
+    """Instagram did not respond within the overall time budget."""
+
+
+# When no `since` bound is given, there is nothing to naturally stop
+# pagination early -- an active profile's full post/reel history can be
+# dozens of pages. Cap to a recent window instead; explicitly narrowing
+# the date range still works via the ordinary early-break above this.
+_MAX_ITEMS_WITHOUT_DATE_RANGE = 50
+
 
 class InstaloaderService:
     """Instagram-specific engine: precise, typed exceptions and native
@@ -56,6 +90,8 @@ class InstaloaderService:
         loader = instaloader.Instaloader(
             sleep=True,
             quiet=True,
+            request_timeout=_REQUEST_TIMEOUT_SECONDS,
+            max_connection_attempts=_MAX_CONNECTION_ATTEMPTS,
             download_video_thumbnails=False,
             download_geotags=False,
             download_comments=False,
@@ -79,7 +115,10 @@ class InstaloaderService:
         returning the logged-in username, or None if it does not (missing,
         expired, or rejected). Lets the UI confirm a pasted cookie works
         immediately instead of finding out mid-preview."""
-        return await asyncio.to_thread(self._test_session_sync)
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(self._test_session_sync), timeout=_OVERALL_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            return None
 
     def _test_session_sync(self) -> str | None:
         loader = self._build_loader()
@@ -130,6 +169,16 @@ class InstaloaderService:
                 # of paging through a profile's entire history.
                 break
             previews.append(InstaloaderService._post_to_preview(post, bucket))
+            if since is None and len(previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE:
+                # No lower date bound to stop at naturally -- live-verified
+                # this is the actual dominant cause of a preview call taking
+                # minutes, not just a stalled connection: instaloader's own
+                # get_reels()/get_posts() paginate an active profile's
+                # *entire* history, each page its own HTTP request with a
+                # rate-limit courtesy delay between them (sleep=True). Cap
+                # to a recent window for interactive browsing; a real date
+                # range still overrides this via the `break` above.
+                break
         return previews
 
     @staticmethod
@@ -232,7 +281,16 @@ class InstaloaderService:
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> list[ProfileItemPreview]:
-        return await asyncio.to_thread(self._list_profile_items_sync, profile_url, content_types, since, until)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._list_profile_items_sync, profile_url, content_types, since, until),
+                timeout=_OVERALL_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise InstaloaderTimeoutError(
+                f'Instagram did not respond within {_OVERALL_TIMEOUT_SECONDS:.0f}s. It may be rate-limiting this '
+                'session or temporarily slow -- try again shortly.',
+            ) from exc
 
     def _target_directory(self, username: str | None, content_type: str | None) -> Path:
         folder = _CONTENT_TYPE_FOLDERS.get(content_type or '', 'Posts')
@@ -295,7 +353,15 @@ class InstaloaderService:
                 content_type = item.content_type
 
         try:
-            output_path = await asyncio.to_thread(self._download_sync, job, username, content_type)
+            output_path = await asyncio.wait_for(
+                asyncio.to_thread(self._download_sync, job, username, content_type),
+                timeout=_DOWNLOAD_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            self._fail(
+                job, f'Instagram download timed out after {_DOWNLOAD_TIMEOUT_SECONDS:.0f}s.',
+                DownloadErrorCategory.NETWORK_ERROR,
+            )
         except instaloader.LoginRequiredException as exc:
             self._fail(job, f'Instagram requires a session: {exc}', DownloadErrorCategory.AUTHENTICATION_REQUIRED)
         except instaloader.PrivateProfileNotFollowedException as exc:
