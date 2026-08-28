@@ -38,9 +38,11 @@ phase-by-phase status — the summary below is kept short and can lag it.
   2026-08-28 it is also live-verified end to end against a real session
   cookie: authenticated profile preview returns real, correctly-mapped
   posts/carousels/reels, session verify works, and downloads write real
-  files to the right folders. Stories and Highlights are the part still
-  never exercised live — see the roadmap's Phase 5 "Round 6" and "What's
-  left".
+  files to the right per-profile folders with date-stamped names and
+  caption sidecars. Stories and Highlights are the part still never
+  exercised live — see the roadmap's Phase 5 "Round 7" and "What's left",
+  where the open items are pagination (results truncate silently at 50)
+  and UI responsiveness (replace the 2s poll with SSE).
 
 ## Current architecture
 ```text
@@ -112,6 +114,15 @@ Fourth live finding (2026-08-28, real session cookie, real public profile, insta
 
 Preview, session verification and download are now all live-verified end to end against a real signed-in session; Stories and Highlights are not, and may carry a per-item cost like (2). See docs/docs_POCKETDL_ROADMAP.md Phase 5 "Round 6".
 
+Fifth live finding (2026-08-28, user testing on a second real profile) — Round 6's reels change was verified only against one profile and generalized badly:
+
+1. **The Instagram Reels tab is NOT a subset of the profile grid.** A reel can be published without showing on the grid. Measured on a real profile: 25 grid posts with **zero** `product_type == 'clips'` entries, alongside 15+ reels in the Reels tab, entirely disjoint. So "read reels by filtering the timeline" returns nothing at all for such an account. But `Profile.get_reels()` is still ~12s/reel (re-measured: 15 reels in 179s). The way out is neither: drive the reels connection through `instaloader.NodeIterator` with a `node_wrapper` that returns the raw media struct instead of refetching — one request per 12 reels.
+2. **Instagram media pks encode a timestamp**: `(pk >> 23) + 1314220021721` ms. This is how a reel preview gets a date, since the reels connection omits `taken_at` and `caption` entirely. It is the upload-start time, so it runs early by 47s to ~31min — treat it as an approximation, and correct it at download time where `Post.from_shortcode` runs anyway.
+3. **`post.owner_username` is not the profile you browsed.** Instagram credits a co-authored post to the collaborator, so keying a download folder on it scatters one profile's files across other users' folders. `CollectionItem.profile_username` records the profile the item was discovered under; `author_username` stays the true credit.
+4. **instaloader's defaults were right and Round 6 overrode them.** `filename_pattern` defaults to `'{date_utc}_UTC'` and `post_metadata_txt_pattern` to `'{caption}'` (a `<basename>.txt` sidecar); `download_pic` already skips a file that exists. Round 6 removed the date and disabled the sidecar on the reasoning that captions live in the DB — wrong for an archive meant to be readable without PocketDL. Now `{date_utc:%Y-%m-%d_%H-%M-%S}_{shortcode}` (explicit spec because the literal default renders with colons, which the Windows sanitizer mangles) with the sidecar re-enabled and the JSON still off.
+
+Rate-limit boundary: the PWA's 2s poll must never reach Instagram. It doesn't — the polled routes are local-only and `GET /api/instagram/session` deliberately skips verification — and `tests/test_polling_does_not_hit_instagram.py` now enforces that both ways. See docs/docs_POCKETDL_ROADMAP.md Phase 5 "Round 7".
+
 ## Current known bugs / backlog
 1. Duplicate captured cards — mostly fixed (signed-token normalization,
    HLS master/variant grouping). Still open: multi-CDN/hostname-rotation
@@ -173,6 +184,14 @@ A previously bad `.gitignore` used a broad `*` pattern. This caused a real incid
 `ModuleNotFoundError: No module named 'app.application.downloads.service'`
 
 Therefore, whenever a source file is missing on another machine, inspect Git tracking first instead of manually patching the machine.
+
+## Test credentials
+`.secrets/` is gitignored as a whole directory. `.secrets/instagram_session.json`
+holds a real browser session cookie export used to exercise the Instagram path
+against live data. A session cookie is a full account credential, not a scoped
+token: never commit it, never log it, never echo it into a response, a test
+fixture, or a commit message. Drop a new platform's test session into the same
+directory rather than adding another `.gitignore` rule.
 
 ## Dependency management
 The backend declares:

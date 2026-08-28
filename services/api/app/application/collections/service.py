@@ -56,6 +56,7 @@ class CollectionService:
             source_url=preview.source_url,
             content_type=preview.content_type,
             author_username=preview.author_username,
+            profile_username=preview.profile_username,
             caption=preview.caption,
             thumbnail_url=preview.thumbnail_url,
             external_id=preview.external_id,

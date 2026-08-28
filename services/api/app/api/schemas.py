@@ -272,6 +272,7 @@ class ProfileItemPreviewResponse(BaseModel):
     source_url: str
     content_type: str
     author_username: str | None
+    profile_username: str | None = None
     caption: str | None
     thumbnail_url: str | None
     external_id: str | None
@@ -319,6 +320,7 @@ class CollectionItemAddRequest(BaseModel):
     source_url: str
     content_type: Literal['post', 'carousel', 'reel', 'story', 'highlight']
     author_username: str | None = Field(default=None, max_length=200)
+    profile_username: str | None = Field(default=None, max_length=200)
     caption: str | None = Field(default=None, max_length=5000)
     thumbnail_url: str | None = Field(default=None, max_length=2000)
     external_id: str | None = Field(default=None, max_length=200)
@@ -339,6 +341,7 @@ class CollectionItemResponse(BaseModel):
     source_url: str
     content_type: str
     author_username: str | None
+    profile_username: str | None = None
     caption: str | None
     thumbnail_url: str | None
     external_id: str | None

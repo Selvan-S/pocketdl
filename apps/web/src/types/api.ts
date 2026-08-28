@@ -161,6 +161,10 @@ export interface ProfileItemPreview {
   source_url: string;
   content_type: InstagramContentType;
   author_username: string | null;
+  /** The profile this item was discovered under. Differs from
+   * author_username when Instagram credits a post to a collaborator, and it
+   * is what decides the download folder. */
+  profile_username: string | null;
   caption: string | null;
   thumbnail_url: string | null;
   external_id: string | null;
@@ -193,6 +197,10 @@ export interface CollectionItem {
   source_url: string;
   content_type: InstagramContentType;
   author_username: string | null;
+  /** The profile this item was discovered under. Differs from
+   * author_username when Instagram credits a post to a collaborator, and it
+   * is what decides the download folder. */
+  profile_username: string | null;
   caption: string | null;
   thumbnail_url: string | null;
   external_id: string | null;

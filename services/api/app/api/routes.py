@@ -157,6 +157,7 @@ def collection_item_response(item: CollectionItem) -> CollectionItemResponse:
         source_url=item.source_url,
         content_type=item.content_type,
         author_username=item.author_username,
+        profile_username=item.profile_username,
         caption=item.caption,
         thumbnail_url=item.thumbnail_url,
         external_id=item.external_id,
@@ -448,6 +449,7 @@ async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, req
     return InstagramProfilePreviewResponse(items=[
         ProfileItemPreviewResponse(
             source_url=item.source_url, content_type=item.content_type, author_username=item.author_username,
+            profile_username=item.profile_username,
             caption=item.caption, thumbnail_url=item.thumbnail_url, external_id=item.external_id,
             posted_at=item.posted_at,
         )
@@ -569,6 +571,7 @@ async def add_collection_item(collection_id: str, payload: CollectionItemAddRequ
         source_url=payload.source_url,
         content_type=payload.content_type,
         author_username=payload.author_username,
+        profile_username=payload.profile_username,
         caption=payload.caption,
         thumbnail_url=payload.thumbnail_url,
         external_id=payload.external_id,

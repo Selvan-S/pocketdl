@@ -34,12 +34,44 @@ class SqliteCollectionRepository(CollectionRepository):
                     external_id TEXT,
                     added_at TEXT NOT NULL,
                     posted_at TEXT,
-                    downloaded_job_id TEXT
+                    downloaded_job_id TEXT,
+                    profile_username TEXT
                 )'''
             )
             await db.execute('CREATE INDEX IF NOT EXISTS idx_collection_items_collection ON collection_items (collection_id)')
             await self._ensure_columns(db)
+            await self._ensure_item_uniqueness(db)
             await db.commit()
+
+    # One row per piece of content per collection. external_id (the
+    # platform's own id, e.g. an Instagram shortcode) is the real identity;
+    # source_url is the fallback for an item that has none, since SQLite
+    # treats NULLs in a unique index as distinct and would let them pile up.
+    _ITEM_IDENTITY = 'collection_id, COALESCE(external_id, source_url)'
+
+    @classmethod
+    async def _ensure_item_uniqueness(cls, db: aiosqlite.Connection) -> None:
+        """Previewing the same profile twice and adding the same items again
+        used to silently duplicate every row, because nothing stopped it.
+
+        Existing databases can already hold those duplicates, so they are
+        collapsed before the index is created -- otherwise the CREATE would
+        fail on exactly the databases that need it most. Keeps the
+        earliest-added row of each group so a recorded downloaded_job_id
+        isn't thrown away. Idempotent: a second run finds nothing to delete
+        and the index already present.
+        """
+        await db.execute(
+            f"""DELETE FROM collection_items WHERE id NOT IN (
+                SELECT id FROM collection_items
+                GROUP BY {cls._ITEM_IDENTITY}
+                HAVING id = MIN(id) OR added_at = MIN(added_at)
+            )""",
+        )
+        await db.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_items_identity '
+            f'ON collection_items ({cls._ITEM_IDENTITY})',
+        )
 
     @staticmethod
     async def _ensure_columns(db: aiosqlite.Connection) -> None:
@@ -47,6 +79,7 @@ class SqliteCollectionRepository(CollectionRepository):
         columns = {row[1] for row in await cursor.fetchall()}
         migrations = {
             'posted_at': 'ALTER TABLE collection_items ADD COLUMN posted_at TEXT',
+            'profile_username': 'ALTER TABLE collection_items ADD COLUMN profile_username TEXT',
         }
         for column, statement in migrations.items():
             if column not in columns:
@@ -76,6 +109,7 @@ class SqliteCollectionRepository(CollectionRepository):
             added_at=datetime.fromisoformat(row['added_at']),
             posted_at=datetime.fromisoformat(row['posted_at']) if row['posted_at'] else None,
             downloaded_job_id=row['downloaded_job_id'],
+            profile_username=row['profile_username'] if 'profile_username' in row.keys() else None,
         )
 
     async def add_collection(self, collection: Collection) -> Collection:
@@ -122,17 +156,32 @@ class SqliteCollectionRepository(CollectionRepository):
             await db.execute(
                 '''INSERT INTO collection_items (
                     id, collection_id, source_url, content_type, author_username, caption,
-                    thumbnail_url, external_id, added_at, posted_at, downloaded_job_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    thumbnail_url, external_id, added_at, posted_at, downloaded_job_id,
+                    profile_username
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING''',
                 (
                     item.id, item.collection_id, item.source_url, item.content_type, item.author_username,
                     item.caption, item.thumbnail_url, item.external_id, item.added_at.isoformat(),
                     item.posted_at.isoformat() if item.posted_at else None, item.downloaded_job_id,
+                    item.profile_username,
                 ),
             )
             await db.execute('UPDATE collections SET updated_at = ? WHERE id = ?', (item.added_at.isoformat(), item.collection_id))
             await db.commit()
-        return item
+
+            # Re-adding an item the collection already holds is a no-op, not
+            # an error: the caller gets the row that is actually stored (with
+            # its original id and any downloaded_job_id), so "add these 20"
+            # after a second preview quietly keeps the 5 that are new.
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                'SELECT * FROM collection_items WHERE collection_id = ? '
+                'AND COALESCE(external_id, source_url) = COALESCE(?, ?)',
+                (item.collection_id, item.external_id, item.source_url),
+            )
+            row = await cursor.fetchone()
+        return self._row_to_item(row) if row is not None else item
 
     async def get_item(self, item_id: str) -> CollectionItem | None:
         async with aiosqlite.connect(self.database_path) as db:
@@ -152,6 +201,33 @@ class SqliteCollectionRepository(CollectionRepository):
     async def remove_item(self, collection_id: str, item_id: str) -> None:
         async with aiosqlite.connect(self.database_path) as db:
             await db.execute('DELETE FROM collection_items WHERE id = ? AND collection_id = ?', (item_id, collection_id))
+            await db.commit()
+
+    async def update_item_metadata(
+        self, item_id: str, *, caption: str | None, posted_at: datetime | None,
+    ) -> None:
+        """Backfill metadata that discovery could not supply cheaply.
+
+        A reel preview comes from the Reels connection, which carries no
+        caption and only an approximate date derived from the media id (see
+        InstaloaderService._media_pk_to_datetime). Downloading the item
+        fetches the real post anyway, so this is where the exact values
+        become known. Only ever fills gaps or corrects the approximation --
+        never overwrites a caption with nothing.
+        """
+        assignments: list[str] = []
+        params: list[object] = []
+        if caption is not None:
+            assignments.append('caption = ?')
+            params.append(caption)
+        if posted_at is not None:
+            assignments.append('posted_at = ?')
+            params.append(posted_at.isoformat())
+        if not assignments:
+            return
+        params.append(item_id)
+        async with aiosqlite.connect(self.database_path) as db:
+            await db.execute(f'UPDATE collection_items SET {", ".join(assignments)} WHERE id = ?', params)
             await db.commit()
 
     async def mark_item_downloaded(self, item_id: str, job_id: str) -> None:

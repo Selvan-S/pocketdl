@@ -31,7 +31,9 @@ def build_collection(collection_id: str = 'c1', name: str = 'My Reels') -> Colle
     return Collection(id=collection_id, platform=Platform.INSTAGRAM, name=name, created_at=now, updated_at=now)
 
 
-def build_item(item_id: str, collection_id: str, url: str = 'https://instagram.com/p/abc/') -> CollectionItem:
+def build_item(
+    item_id: str, collection_id: str, url: str = 'https://instagram.com/p/abc/', external_id: str | None = None,
+) -> CollectionItem:
     return CollectionItem(
         id=item_id,
         collection_id=collection_id,
@@ -40,7 +42,10 @@ def build_item(item_id: str, collection_id: str, url: str = 'https://instagram.c
         author_username='someone',
         caption='a caption',
         thumbnail_url='https://cdn.example/thumb.jpg',
-        external_id='abc',
+        # Defaults to the item id so two items built for one collection are
+        # distinct content by default; pass external_id explicitly to model
+        # the same post being added twice.
+        external_id=external_id if external_id is not None else item_id,
         added_at=_now(),
     )
 
@@ -182,3 +187,130 @@ async def test_initialize_migrates_a_pre_posted_at_database_and_is_idempotent(tm
     legacy = await repository.get_item('legacy-1')
     assert legacy is not None
     assert legacy.posted_at is None
+
+
+# --- Round 7: one row per piece of content per collection ---
+
+
+@pytest.mark.asyncio
+async def test_adding_the_same_content_twice_is_a_no_op(tmp_path) -> None:
+    # Previewing a profile again and re-adding the same selection used to
+    # duplicate every row, because nothing stopped it.
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+
+    first = await repository.add_item(build_item('i1', 'c1', external_id='shortcode-1'))
+    second = await repository.add_item(build_item('i2', 'c1', external_id='shortcode-1'))
+
+    items = await repository.list_items('c1')
+    assert len(items) == 1
+    # The caller gets back the row that is actually stored, not the rejected one.
+    assert first.id == 'i1'
+    assert second.id == 'i1'
+
+
+@pytest.mark.asyncio
+async def test_the_same_content_in_two_collections_is_allowed(tmp_path) -> None:
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection('c1'))
+    await repository.add_collection(build_collection('c2', name='Another'))
+
+    await repository.add_item(build_item('i1', 'c1', external_id='shortcode-1'))
+    await repository.add_item(build_item('i2', 'c2', external_id='shortcode-1'))
+
+    assert len(await repository.list_items('c1')) == 1
+    assert len(await repository.list_items('c2')) == 1
+
+
+@pytest.mark.asyncio
+async def test_items_without_an_external_id_dedupe_on_source_url(tmp_path) -> None:
+    # Stories and highlights have no stable shortcode, so they fall back to
+    # the media URL -- SQLite treats NULLs in a unique index as distinct and
+    # would otherwise let them pile up.
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+
+    same_url = 'https://cdn.example/story.mp4'
+    first = build_item('i1', 'c1', url=same_url)
+    first.external_id = None
+    second = build_item('i2', 'c1', url=same_url)
+    second.external_id = None
+    await repository.add_item(first)
+    await repository.add_item(second)
+
+    assert len(await repository.list_items('c1')) == 1
+
+
+@pytest.mark.asyncio
+async def test_initialize_collapses_duplicates_already_in_the_database(tmp_path) -> None:
+    # A database written before the index existed can already hold
+    # duplicates; creating the index would fail on exactly those unless they
+    # are collapsed first. The earliest row wins so a recorded
+    # downloaded_job_id is not thrown away.
+    database = tmp_path / 'pocketdl.db'
+    repository = SqliteCollectionRepository(database)
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+
+    with sqlite3.connect(database) as raw:
+        raw.execute('DROP INDEX idx_collection_items_identity')
+        for item_id in ('i1', 'i2', 'i3'):
+            raw.execute(
+                'INSERT INTO collection_items (id, collection_id, source_url, content_type, external_id, added_at) '
+                "VALUES (?, 'c1', 'https://instagram.com/p/dupe/', 'reel', 'dupe', ?)",
+                (item_id, f'2026-08-2{item_id[-1]}T00:00:00+00:00'),
+            )
+        raw.commit()
+
+    await repository.initialize()
+
+    items = await repository.list_items('c1')
+    assert [item.id for item in items] == ['i1']
+
+
+@pytest.mark.asyncio
+async def test_initialize_is_idempotent_after_collapsing(tmp_path) -> None:
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+    await repository.add_item(build_item('i1', 'c1', external_id='shortcode-1'))
+
+    await repository.initialize()
+    await repository.initialize()
+
+    assert [item.id for item in await repository.list_items('c1')] == ['i1']
+
+
+@pytest.mark.asyncio
+async def test_update_item_metadata_fills_gaps(tmp_path) -> None:
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+    item = build_item('i1', 'c1', external_id='shortcode-1')
+    item.caption = None
+    item.posted_at = None
+    await repository.add_item(item)
+
+    exact = datetime(2026, 8, 23, 11, 9, 1, tzinfo=timezone.utc)
+    await repository.update_item_metadata('i1', caption='the real caption', posted_at=exact)
+
+    stored = (await repository.list_items('c1'))[0]
+    assert stored.caption == 'the real caption'
+    assert stored.posted_at == exact
+
+
+@pytest.mark.asyncio
+async def test_update_item_metadata_never_blanks_an_existing_caption(tmp_path) -> None:
+    # A reel with no caption must not wipe one that discovery did supply.
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+    await repository.add_item(build_item('i1', 'c1', external_id='shortcode-1'))
+
+    await repository.update_item_metadata('i1', caption=None, posted_at=None)
+
+    stored = (await repository.list_items('c1'))[0]
+    assert stored.caption == 'a caption'

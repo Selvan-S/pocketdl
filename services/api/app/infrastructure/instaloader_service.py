@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,11 +32,49 @@ _CONTENT_TYPE_FOLDERS = {
     'highlight': 'Highlights',
 }
 
-# instaloader's own filename pattern language (see Instaloader.filename_pattern) --
-# shortcode-based instead of the date_utc default, for stable, readable
-# filenames matching this project's "no raw signed/opaque names" filename
-# policy (see docs_POCKETDL_ROADMAP.md Phase 3).
-_FILENAME_PATTERN = '{shortcode}_{typename}'
+# instaloader's own filename pattern language (see Instaloader.filename_pattern).
+#
+# Date first so a folder sorts chronologically by name, then the shortcode so
+# the name is collision-free and a generated gallery can link a file back to
+# its Instagram post. instaloader's own default is '{date_utc}_UTC', which
+# renders with colons ('2026-08-25 19:55:51_UTC') -- those hit the same
+# Windows sanitize_path mangling documented on dirname_pattern below, so the
+# format spec here spells the date out with hyphens instead.
+#
+# instaloader skips a file that already exists under the exact name it would
+# write (Instaloader.download_pic), so a stable pattern is also what makes
+# re-downloading a collection idempotent.
+_FILENAME_PATTERN = '{date_utc:%Y-%m-%d_%H-%M-%S}_{shortcode}'
+
+# Reels live in their own tab, which is NOT a subset of the profile grid: a
+# reel can be published with "don't show on profile grid", and live testing
+# found a real profile whose 25 grid posts and 15+ reels were entirely
+# disjoint (see docs_POCKETDL_ROADMAP.md Phase 5 "Round 7"). So reels have to
+# come from the reels connection, not from filtering the timeline.
+#
+# instaloader's own Profile.get_reels() wraps this same connection but calls
+# Post.from_shortcode() per reel to fill in the metadata the connection
+# omits -- measured live at 15 reels in 179s. This module drives the
+# connection directly and builds previews from the raw media struct instead,
+# which costs one request per 12 reels.
+_REELS_DOC_ID = '7845543455542541'
+_REELS_PAGE_SIZE = 12
+_REELS_CONNECTION_KEY = 'xdt_api__v1__clips__user__connection_v2'
+
+# Instagram media primary keys are Snowflake-like: the upper bits are a
+# millisecond timestamp offset from this epoch. The reels connection omits
+# `taken_at` entirely, so this is how a reel preview gets a date without
+# spending a request per reel to look one up.
+#
+# It is the moment the *upload began*, not the moment the post published, so
+# it runs early -- measured against known-good dates on a real profile, by
+# between 47 seconds and 31 minutes. Good enough to sort by and to filter a
+# day-granularity date range with, and it is deliberately surfaced as
+# approximate rather than presented as exact; the true date and the caption
+# are both filled in at download time, where Post.from_shortcode() runs
+# anyway.
+_IG_ID_EPOCH_MS = 1314220021721
+_IG_ID_TIMESTAMP_SHIFT = 23
 
 # instaloader's own default request_timeout is 300s (five minutes) *per HTTP
 # request*, with max_connection_attempts=3 retries on top -- live-verified
@@ -63,6 +102,21 @@ _DOWNLOAD_TIMEOUT_SECONDS = 600.0
 
 class InstaloaderTimeoutError(RuntimeError):
     """Instagram did not respond within the overall time budget."""
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadResult:
+    """What a completed download learned on the way.
+
+    A reel's preview comes from the Reels connection, which carries no
+    caption and only a media-id-derived approximation of the date. The
+    download fetches the real post regardless, so the exact values are free
+    here -- worth handing back so the stored item stops showing an estimate.
+    """
+
+    output_path: str
+    caption: str | None = None
+    posted_at: datetime | None = None
 
 
 # When no `since` bound is given, there is nothing to naturally stop
@@ -135,12 +189,14 @@ class InstaloaderService:
             save_metadata=False,
             compress_json=False,
             filename_pattern=_FILENAME_PATTERN,
-            # save_metadata=False alone still leaves a per-post .txt caption
-            # sidecar written by default (post_metadata_txt_pattern defaults
-            # to '{caption}') -- caption is already stored in the DB
-            # (CollectionItem.caption), so an extra file per download would
-            # just clutter the folder.
-            post_metadata_txt_pattern='',
+            # instaloader's default: a per-post '<same basename>.txt' holding
+            # the caption. Round 6 disabled this on the grounds that the
+            # caption is already in the DB (CollectionItem.caption), which
+            # was the wrong call -- the download folder should stand on its
+            # own, readable without PocketDL's database, and a generated
+            # offline gallery reads captions from here. The heavier
+            # per-post JSON stays off via save_metadata=False above.
+            post_metadata_txt_pattern='{caption}',
             # Where downloads land. instaloader's default is '{target}',
             # substituting the `target=` argument of download_post() -- but
             # every *substituted* value is run through
@@ -246,11 +302,16 @@ class InstaloaderService:
         return InstagramContentType.POST.value
 
     @staticmethod
-    def _post_to_preview(post: instaloader.Post, bucket: InstagramContentType) -> ProfileItemPreview:
+    def _post_to_preview(
+        post: instaloader.Post, bucket: InstagramContentType, profile_username: str | None = None,
+    ) -> ProfileItemPreview:
         return ProfileItemPreview(
             source_url=f'https://www.instagram.com/p/{post.shortcode}/',
             content_type=InstaloaderService._classify(post, bucket),
+            # The true credit, which for a co-authored post is the
+            # collaborator rather than the profile being browsed.
             author_username=post.owner_username,
+            profile_username=profile_username,
             caption=post.caption or None,
             thumbnail_url=post.url,
             external_id=post.shortcode,
@@ -278,32 +339,17 @@ class InstaloaderService:
         return bool(InstaloaderService._media_struct(post).get('timeline_pinned_user_ids'))
 
     @staticmethod
-    def _scan_timeline(
+    def _collect_posts(
         posts,
+        bucket: InstagramContentType,
         since: datetime | None,
         until: datetime | None,
-        *,
-        want_posts: bool,
-        want_reels: bool,
-    ) -> tuple[list[ProfileItemPreview], list[ProfileItemPreview]]:
-        """Read the profile timeline once, filling the post and reel buckets
-        together.
-
-        Both buckets come from the same `Profile.get_posts()` stream, so
-        scanning per-bucket paged the identical timeline twice and doubled
-        both the wall-clock time and the rate-limit pressure for the common
-        "everything" selection. Returns the two lists separately so the
-        caller can order them by the content types it was asked for.
-
-        A reel legitimately appears in both lists when both are requested:
-        the reel bucket is a filtered view of the timeline, not a disjoint
-        one, which is the pre-existing behaviour of asking for posts and
-        reels at once.
-        """
-        post_previews: list[ProfileItemPreview] = []
-        reel_previews: list[ProfileItemPreview] = []
+        profile_username: str | None = None,
+    ) -> list[ProfileItemPreview]:
+        """Read the profile timeline (the grid). Reels are NOT sourced from
+        here -- see _collect_reels for why the two are separate."""
+        previews: list[ProfileItemPreview] = []
         scanned = 0
-
         for post in posts:
             scanned += 1
             if scanned > _MAX_POSTS_SCANNED:
@@ -320,49 +366,103 @@ class InstaloaderService:
                 # Everything after this point is even older, so stop reading
                 # instead of paging through a profile's entire history.
                 break
-
-            is_clip = InstaloaderService._media_struct(post).get('product_type') == _CLIPS_PRODUCT_TYPE
-            posts_open = want_posts and not (
-                since is None and len(post_previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE
-            )
-            reels_open = want_reels and is_clip and not (
-                since is None and len(reel_previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE
-            )
-            if posts_open:
-                post_previews.append(InstaloaderService._post_to_preview(post, InstagramContentType.POST))
-            if reels_open:
-                reel_previews.append(InstaloaderService._post_to_preview(post, InstagramContentType.REEL))
-
-            # With no lower date bound there is nothing to stop pagination
-            # naturally -- live-verified as the dominant cause of a preview
-            # taking minutes rather than a stalled connection, since
-            # get_posts() will otherwise page an active profile's *entire*
-            # history, one request plus a rate-limit courtesy sleep
-            # (sleep=True) per page. Cap to a recent window for interactive
-            # browsing; a real date range overrides it via the `break` above.
-            if since is None:
-                posts_done = not want_posts or len(post_previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE
-                reels_done = not want_reels or len(reel_previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE
-                if posts_done and reels_done:
-                    break
-
-        return post_previews, reel_previews
+            previews.append(InstaloaderService._post_to_preview(post, bucket, profile_username))
+            if since is None and len(previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE:
+                # No lower date bound to stop at naturally -- live-verified
+                # as the dominant cause of a preview taking minutes, since
+                # get_posts() will otherwise page an active profile's
+                # *entire* history, one request plus a rate-limit courtesy
+                # sleep (sleep=True) per page. Cap to a recent window for
+                # interactive browsing; a real date range still overrides
+                # this via the `break` above.
+                break
+        return previews
 
     @staticmethod
-    def _collect_posts(
-        posts,
-        bucket: InstagramContentType,
+    def _media_pk_to_datetime(pk: int) -> datetime:
+        """Approximate post time recovered from an Instagram media pk -- see
+        _IG_ID_EPOCH_MS."""
+        millis = (pk >> _IG_ID_TIMESTAMP_SHIFT) + _IG_ID_EPOCH_MS
+        return datetime.fromtimestamp(millis / 1000, tz=timezone.utc)
+
+    @staticmethod
+    def _reel_thumbnail(media: dict) -> str | None:
+        candidates = (media.get('image_versions2') or {}).get('candidates') or []
+        for candidate in candidates:
+            url = candidate.get('url')
+            if url:
+                return url
+        return None
+
+    @staticmethod
+    def _reel_to_preview(media: dict, username: str | None) -> ProfileItemPreview | None:
+        code = media.get('code')
+        pk = media.get('pk')
+        if not code or pk is None:
+            return None
+        try:
+            posted_at = InstaloaderService._media_pk_to_datetime(int(pk))
+        except (TypeError, ValueError):
+            return None
+        return ProfileItemPreview(
+            source_url=f'https://www.instagram.com/reel/{code}/',
+            content_type=InstagramContentType.REEL.value,
+            # The reels connection identifies the owner by numeric pk only,
+            # with no username, so this is the profile being browsed. That is
+            # also what we want for the download folder -- see
+            # _target_directory.
+            author_username=username,
+            profile_username=username,
+            # Not in the connection payload at any depth; filled in at
+            # download time. See _IG_ID_EPOCH_MS.
+            caption=None,
+            thumbnail_url=InstaloaderService._reel_thumbnail(media),
+            external_id=code,
+            posted_at=posted_at,
+        )
+
+    def _collect_reels(
+        self,
+        loader: instaloader.Instaloader,
+        profile: instaloader.Profile,
         since: datetime | None,
         until: datetime | None,
-        *,
-        clips_only: bool = False,
     ) -> list[ProfileItemPreview]:
-        """Single-bucket view of `_scan_timeline`, kept for callers (and
-        tests) that only want one of the two."""
-        post_previews, reel_previews = InstaloaderService._scan_timeline(
-            posts, since, until, want_posts=not clips_only, want_reels=clips_only,
+        """Page the reels connection directly, building previews from the raw
+        media struct rather than letting instaloader refetch each reel."""
+        iterator = instaloader.NodeIterator(
+            context=loader.context,
+            query_hash=None,
+            doc_id=_REELS_DOC_ID,
+            edge_extractor=lambda data: data['data'][_REELS_CONNECTION_KEY],
+            # The whole point: hand back the raw struct instead of
+            # Post.from_shortcode(), which is one HTTP request per reel.
+            node_wrapper=lambda node: node.get('media') or {},
+            query_variables={'data': {
+                'page_size': _REELS_PAGE_SIZE,
+                'include_feed_video': True,
+                'target_user_id': str(profile.userid),
+            }},
+            query_referer=f'https://www.instagram.com/{profile.username}/',
         )
-        return reel_previews if clips_only else post_previews
+
+        previews: list[ProfileItemPreview] = []
+        for media in iterator:
+            preview = self._reel_to_preview(media, profile.username)
+            if preview is None or preview.posted_at is None:
+                continue
+            if until is not None and preview.posted_at > until:
+                continue
+            if since is not None and preview.posted_at < since:
+                if media.get('clips_tab_pinned_user_ids'):
+                    # Pinned to the top of the reels tab regardless of age,
+                    # same exception the timeline has for pinned posts.
+                    continue
+                break
+            previews.append(preview)
+            if since is None and len(previews) >= _MAX_ITEMS_WITHOUT_DATE_RANGE:
+                break
+        return previews
 
     @staticmethod
     def _collect_stories(loader: instaloader.Instaloader, profile: instaloader.Profile) -> list[ProfileItemPreview]:
@@ -381,6 +481,7 @@ class InstaloaderService:
                     source_url=item.url,
                     content_type=InstagramContentType.STORY.value,
                     author_username=profile.username,
+                    profile_username=profile.username,
                     caption=item.caption or None,
                     thumbnail_url=item.url,
                     external_id=str(item.mediaid),
@@ -401,6 +502,7 @@ class InstaloaderService:
                     source_url=item.url,
                     content_type=InstagramContentType.HIGHLIGHT.value,
                     author_username=profile.username,
+                    profile_username=profile.username,
                     caption=item.caption or highlight.title or None,
                     thumbnail_url=item.url,
                     external_id=str(item.mediaid),
@@ -429,11 +531,6 @@ class InstaloaderService:
 
         previews: list[ProfileItemPreview] = []
         seen_buckets: set[InstagramContentType] = set()
-        timeline_buckets = {
-            InstagramContentType.POST if content_type is InstagramContentType.CAROUSEL else content_type
-            for content_type in content_types
-        } & {InstagramContentType.POST, InstagramContentType.REEL}
-        timeline_scan: tuple[list[ProfileItemPreview], list[ProfileItemPreview]] | None = None
         for content_type in content_types:
             bucket = InstagramContentType.POST if content_type is InstagramContentType.CAROUSEL else content_type
             if bucket in seen_buckets:
@@ -445,31 +542,12 @@ class InstaloaderService:
                     previews.extend(self._collect_stories(loader, profile))
                 elif bucket is InstagramContentType.HIGHLIGHT:
                     previews.extend(self._collect_highlights(loader, profile))
+                elif bucket is InstagramContentType.REEL:
+                    previews.extend(self._collect_reels(loader, profile, since, until))
                 else:
-                    # Both remaining buckets are views of the same timeline,
-                    # so they are scanned together once, on whichever of the
-                    # two is requested first.
-                    #
-                    # Deliberately NOT profile.get_reels() for the reel
-                    # bucket: instaloader's reels connection returns a media
-                    # struct with no taken_at/caption/owner, so its own
-                    # node_wrapper issues a `Post.from_shortcode()` refetch
-                    # per reel -- measured live at ~12s per reel including
-                    # instaloader's rate-limit courtesy sleeps, i.e. ~10
-                    # minutes for this module's 50-item cap. The ordinary
-                    # timeline returns complete metadata 12 items per
-                    # request, and its product_type=='clips' entries were
-                    # verified to be exactly the same posts, in the same
-                    # order, that get_reels() produced. See
-                    # docs_POCKETDL_ROADMAP.md Phase 5 "Round 6".
-                    if timeline_scan is None:
-                        timeline_scan = self._scan_timeline(
-                            profile.get_posts(), since, until,
-                            want_posts=InstagramContentType.POST in timeline_buckets,
-                            want_reels=InstagramContentType.REEL in timeline_buckets,
-                        )
-                    scanned_posts, scanned_reels = timeline_scan
-                    previews.extend(scanned_reels if bucket is InstagramContentType.REEL else scanned_posts)
+                    previews.extend(
+                        self._collect_posts(profile.get_posts(), bucket, since, until, profile.username),
+                    )
             except instaloader.LoginRequiredException as exc:
                 raise InstagramAuthRequiredError(f'Instagram requires a session to view this content: {exc}') from exc
             except instaloader.PrivateProfileNotFollowedException as exc:
@@ -502,12 +580,19 @@ class InstaloaderService:
             ) from exc
 
     def _target_directory(self, username: str | None, content_type: str | None) -> Path:
+        """`username` is the profile the item was discovered under, not
+        necessarily the post's own owner: Instagram attributes a co-authored
+        post to the collaborator, so keying the folder on `post.owner_username`
+        scattered one profile's download across other people's folders
+        (live-verified -- a post browsed on `nasa` reported `nasajohnson`).
+        See docs_POCKETDL_ROADMAP.md Phase 5 "Round 7".
+        """
         folder = _CONTENT_TYPE_FOLDERS.get(content_type or '', 'Posts')
         directory = self.settings.download_directory.joinpath('Instagram', username or 'unknown', folder)
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    def _download_sync(self, job: DownloadJob, username: str | None, content_type: str | None) -> str | None:
+    def _download_sync(self, job: DownloadJob, username: str | None, content_type: str | None) -> DownloadResult:
         target_dir = self._target_directory(username, content_type)
         loader = self._build_loader(target_dir)
 
@@ -525,7 +610,20 @@ class InstaloaderService:
             # all of them still land on disk, this just doesn't enumerate
             # them for display, matching output_path's existing single-path
             # shape everywhere else in this codebase.
-            matches = sorted(target_dir.glob(f'{shortcode}_*'), key=lambda p: p.stat().st_mtime, reverse=True)
+            # _FILENAME_PATTERN puts the date first, so the shortcode is
+            # in the middle of the name rather than at the start.
+            matches = sorted(
+                (path for path in target_dir.glob(f'*{shortcode}*') if path.suffix.lower() != '.txt'),
+                key=lambda path: path.stat().st_mtime, reverse=True,
+            )
+            caption = None
+            posted_at = None
+            try:
+                caption = post.caption or None
+                posted_at = post.date_utc.replace(tzinfo=timezone.utc)
+            except Exception:  # noqa: BLE001 -- metadata is a bonus, never a reason to fail a saved file
+                pass
+
             if not matches:
                 # download_post() returns True even when nothing reached
                 # disk, so an empty target directory is the only reliable
@@ -536,7 +634,7 @@ class InstaloaderService:
                 raise RuntimeError(
                     f'Instagram post {shortcode} reported success but no file was written to {target_dir}.',
                 )
-            return str(matches[0])
+            return DownloadResult(output_path=str(matches[0]), caption=caption, posted_at=posted_at)
 
         # Not a page URL -- a direct story/highlight media URL captured at
         # preview time (see _collect_stories/_collect_highlights). No
@@ -547,7 +645,9 @@ class InstaloaderService:
         extension = Path(parsed.path).suffix or '.mp4'
         output_path = target_dir / f'{stem}{extension}'
         loader.context.get_and_write_raw(job.url, str(output_path))
-        return str(output_path)
+        # A story/highlight item is a bare media URL with no post behind it,
+        # so there is no richer metadata to learn here.
+        return DownloadResult(output_path=str(output_path))
 
     async def download(
         self,
@@ -571,11 +671,14 @@ class InstaloaderService:
         if collection_item_id and self.collection_repository:
             item = await self.collection_repository.get_item(collection_item_id)
             if item is not None:
-                username = item.author_username
+                # profile_username first: see _target_directory. Falls back to
+                # author_username for items saved before that column existed.
+                username = item.profile_username or item.author_username
                 content_type = item.content_type
 
+        result: DownloadResult | None = None
         try:
-            output_path = await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 asyncio.to_thread(self._download_sync, job, username, content_type),
                 timeout=_DOWNLOAD_TIMEOUT_SECONDS,
             )
@@ -600,6 +703,7 @@ class InstaloaderService:
         except Exception as exc:  # noqa: BLE001 -- last resort, still recorded on the job rather than raised
             self._fail(job, f'Instagram download failed: {exc}', DownloadErrorCategory.UNKNOWN)
         else:
+            output_path = result.output_path if result else None
             if not output_path or not Path(output_path).exists():
                 self._fail(
                     job, 'Instagram download reported success but produced no file.',
@@ -614,6 +718,10 @@ class InstaloaderService:
             job.error = None
             job.error_details = None
             job.error_category = None
+            if collection_item_id and self.collection_repository and result is not None:
+                await self.collection_repository.update_item_metadata(
+                    collection_item_id, caption=result.caption, posted_at=result.posted_at,
+                )
 
         job.finished_at = datetime.now(timezone.utc)
         await on_progress(job)

@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Instagram: reels were coming back empty, and four archive/UX gaps (Phase 5)
+Found by user testing on a second real profile. The previous release read
+reels by filtering the profile grid, which had been verified against only one
+account.
+
+- **Reels returned zero items on profiles whose reels aren't on the grid.**
+  Instagram lets a reel be published without showing on the profile grid, and
+  on a real test profile the grid (25 posts) and the Reels tab (15+ reels)
+  were entirely disjoint. Reels now come from the reels connection directly,
+  driven through `NodeIterator` with a wrapper that returns the raw media
+  struct instead of refetching each reel — one request per 12 reels, rather
+  than instaloader's own ~12s per reel. Dates are recovered from the media id
+  (Snowflake-like), which runs 47s–31min early, so it is treated as an
+  approximation and corrected on download. **50 reels in 23s, from 0.**
+- **Downloads scattered into other users' folders.** Instagram credits a
+  co-authored post to the collaborator, and the download folder keyed on
+  that. Items now record `profile_username` — the profile they were
+  discovered under — separately from `author_username`, with an idempotent
+  column migration and a fallback for existing rows.
+- **Adding the same item twice silently duplicated it.** New unique index on
+  `(collection_id, COALESCE(external_id, source_url))`; adding an item the
+  playlist already holds is now a no-op returning the stored row. Databases
+  with existing duplicates are collapsed on startup, keeping the earliest row
+  so a recorded download isn't lost.
+- **Filenames carry the date again and captions are written again.** Now
+  `2026-08-23_11-09-01_DcYSnllvjCn.mp4` plus a matching `.txt` caption
+  sidecar, so a download folder is readable without PocketDL's database. The
+  per-post metadata JSON stays off. Existing files keep their old names.
+- **Exact caption and post date are backfilled onto the item at download
+  time**, replacing a reel's approximate date with the real one.
+- **The 2s UI poll is now provably unable to reach Instagram.** It never did,
+  but that is now enforced by a test rather than a comment, so a future
+  "always show a verified badge" change can't quietly start rate-limiting the
+  user's account. Adds the project's first HTTP-level test fixture.
+
 ### Instagram: fix authenticated preview and downloads (Phase 5)
 First round with a real Instagram session cookie available for testing.
 Preview had been timing out at 90s and downloads had never actually worked.

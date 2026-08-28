@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Protocol
 
 from .analyzer import MediaAnalysis
@@ -73,3 +74,7 @@ class CollectionRepository(Protocol):
     async def list_items(self, collection_id: str) -> list[CollectionItem]: ...
     async def remove_item(self, collection_id: str, item_id: str) -> None: ...
     async def mark_item_downloaded(self, item_id: str, job_id: str) -> None: ...
+
+    async def update_item_metadata(
+        self, item_id: str, *, caption: str | None, posted_at: datetime | None,
+    ) -> None: ...

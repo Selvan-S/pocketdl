@@ -7,7 +7,7 @@ import pytest
 
 from app.core.session_store import save_session_cookie
 from app.domain.collections import InstagramAuthRequiredError, InstagramContentType
-from app.infrastructure.instaloader_service import InstaloaderService
+from app.infrastructure.instaloader_service import DownloadResult, InstaloaderService
 
 
 class _StubSettings:
@@ -443,35 +443,6 @@ def test_build_loader_ignores_a_username_cached_for_a_different_session(tmp_path
     assert loader.context.username != 'staleuser'
 
 
-def test_collect_posts_clips_only_keeps_reels_and_drops_ordinary_posts(tmp_path: Path) -> None:
-    # Regression: reels are read by filtering the timeline rather than via
-    # instaloader's get_reels(), which costs one extra HTTP request per reel.
-    posts = [
-        _fake_timeline_post('a', datetime(2026, 8, 20, tzinfo=timezone.utc), product_type='feed'),
-        _fake_timeline_post('b', datetime(2026, 8, 19, tzinfo=timezone.utc), product_type='clips'),
-        _fake_timeline_post('c', datetime(2026, 8, 18, tzinfo=timezone.utc), product_type='carousel_container'),
-        _fake_timeline_post('d', datetime(2026, 8, 17, tzinfo=timezone.utc), product_type='clips'),
-    ]
-
-    previews = InstaloaderService._collect_posts(
-        posts, InstagramContentType.REEL, None, None, clips_only=True,
-    )
-
-    assert [p.external_id for p in previews] == ['b', 'd']
-    assert {p.content_type for p in previews} == {'reel'}
-
-
-def test_collect_posts_without_clips_only_keeps_everything(tmp_path: Path) -> None:
-    posts = [
-        _fake_timeline_post('a', datetime(2026, 8, 20, tzinfo=timezone.utc), product_type='feed'),
-        _fake_timeline_post('b', datetime(2026, 8, 19, tzinfo=timezone.utc), product_type='clips'),
-    ]
-
-    previews = InstaloaderService._collect_posts(posts, InstagramContentType.POST, None, None)
-
-    assert [p.external_id for p in previews] == ['a', 'b']
-
-
 def test_collect_posts_does_not_stop_at_an_out_of_order_pinned_post(tmp_path: Path) -> None:
     # Regression: Instagram serves pinned posts at the head of the timeline
     # regardless of age, so the first entry can be older than `since` while
@@ -502,31 +473,6 @@ def test_collect_posts_still_stops_at_an_unpinned_older_post(tmp_path: Path) -> 
     previews = InstaloaderService._collect_posts(posts, InstagramContentType.POST, since, None)
 
     assert [p.external_id for p in previews] == ['recent']
-
-
-def test_collect_posts_bounds_how_many_posts_it_scans_for_reels(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A profile that posts almost no video must not page through its whole
-    # history hunting for reels that aren't there.
-    import app.infrastructure.instaloader_service as instaloader_service_module
-
-    monkeypatch.setattr(instaloader_service_module, '_MAX_POSTS_SCANNED', 10)
-    scanned = 0
-
-    def endless_feed():
-        nonlocal scanned
-        day = datetime(2026, 8, 20, tzinfo=timezone.utc)
-        while True:
-            scanned += 1
-            yield _fake_timeline_post(f'p{scanned}', day, product_type='feed')
-
-    previews = InstaloaderService._collect_posts(
-        endless_feed(), InstagramContentType.REEL, None, None, clips_only=True,
-    )
-
-    assert previews == []
-    assert scanned <= 11
 
 
 def test_media_struct_is_empty_for_a_post_with_no_timeline_struct(tmp_path: Path) -> None:
@@ -620,11 +566,11 @@ def test_download_sync_returns_the_written_file(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setattr(instaloader.Instaloader, 'download_post', fake_download_post)
 
     job = _download_job('https://www.instagram.com/reel/ABC123/')
-    output_path = service._download_sync(job, 'someuser', 'reel')
+    result = service._download_sync(job, 'someuser', 'reel')
 
-    assert Path(output_path).name == 'ABC123_GraphVideo.mp4'
+    assert Path(result.output_path).name == 'ABC123_GraphVideo.mp4'
     # And it landed in the real folder tree, not a sanitized lookalike.
-    assert Path(output_path).parent == tmp_path / 'downloads' / 'Instagram' / 'someuser' / 'Reels'
+    assert Path(result.output_path).parent == tmp_path / 'downloads' / 'Instagram' / 'someuser' / 'Reels'
 
 
 @pytest.mark.asyncio
@@ -656,7 +602,7 @@ async def test_download_fails_when_the_reported_file_does_not_exist(
     from app.domain.models import DownloadStatus, RequestContext
 
     service = _make_service(tmp_path)
-    missing = str(tmp_path / 'gone.mp4')
+    missing = DownloadResult(output_path=str(tmp_path / 'gone.mp4'))
     monkeypatch.setattr(InstaloaderService, '_download_sync', lambda self, job, username, content_type: missing)
 
     async def on_progress(job) -> None:
@@ -680,7 +626,8 @@ async def test_download_succeeds_when_the_file_is_really_there(
     written = tmp_path / 'real.mp4'
     written.write_bytes(b'video')
     monkeypatch.setattr(
-        InstaloaderService, '_download_sync', lambda self, job, username, content_type: str(written),
+        InstaloaderService, '_download_sync',
+        lambda self, job, username, content_type: DownloadResult(output_path=str(written)),
     )
 
     async def on_progress(job) -> None:
@@ -726,83 +673,414 @@ def _mixed_timeline() -> list:
     ]
 
 
-@pytest.mark.asyncio
-async def test_posts_and_reels_page_the_timeline_only_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Regression: posts and reels are both views of Profile.get_posts(), so
-    # scanning them separately paged the identical timeline twice. Measured
-    # live at 63s vs 45s for the same 100 items -- uncomfortably close to
-    # the 90s overall budget for the common "everything" selection.
-    service = _make_service(tmp_path)
-    profile = _TimelineProfile(_mixed_timeline())
-    monkeypatch.setattr(instaloader.Profile, 'from_username', staticmethod(lambda context, username: profile))
+# --- Round 7 regressions: reels come from the Reels tab, not the timeline ---
 
-    items = await service.list_profile_items(
-        'https://www.instagram.com/someuser/', [InstagramContentType.POST, InstagramContentType.REEL],
+
+def _reel_media(code: str, pk: int, *, pinned: bool = False, thumb: str | None = 'https://cdn.example/r.jpg') -> dict:
+    """The shape the reels connection actually returns -- note the absence of
+    taken_at and caption, which is the whole reason for _media_pk_to_datetime."""
+    media: dict = {
+        'code': code,
+        'pk': pk,
+        'media_type': 2,
+        'user': {'pk': '123', 'id': '123'},
+        'clips_tab_pinned_user_ids': ['123'] if pinned else [],
+    }
+    if thumb:
+        media['image_versions2'] = {'candidates': [{'height': 1280, 'url': thumb}]}
+    return media
+
+
+def _pk_for(when: datetime) -> int:
+    """Inverse of _media_pk_to_datetime, for building fixtures at a known date."""
+    import app.infrastructure.instaloader_service as mod
+
+    millis = int(when.timestamp() * 1000) - mod._IG_ID_EPOCH_MS
+    return millis << mod._IG_ID_TIMESTAMP_SHIFT
+
+
+class _ReelsProfile:
+    """Profile stub with an empty grid but a populated Reels tab -- the exact
+    shape that made reels come back empty."""
+
+    def __init__(self, timeline: list | None = None) -> None:
+        self.userid = 1
+        self.username = 'someuser'
+        self._timeline = timeline or []
+        self.get_posts_calls = 0
+
+    def get_posts(self):
+        self.get_posts_calls += 1
+        return iter(self._timeline)
+
+
+def test_media_pk_round_trips_to_the_expected_timestamp(tmp_path: Path) -> None:
+    when = datetime(2026, 8, 23, 11, 9, 1, tzinfo=timezone.utc)
+    derived = InstaloaderService._media_pk_to_datetime(_pk_for(when))
+    assert abs((derived - when).total_seconds()) < 1
+
+
+def test_media_pk_decodes_a_real_instagram_id(tmp_path: Path) -> None:
+    # Captured live from the reels connection: pk 3971730051816042598 is
+    # shortcode Dcea3BiPTBm, published 2026-08-25 19:55:51 UTC. The derived
+    # value is the upload start, so it runs early -- but only by minutes.
+    derived = InstaloaderService._media_pk_to_datetime(3971730051816042598)
+    published = datetime(2026, 8, 25, 19, 55, 51, tzinfo=timezone.utc)
+    assert derived <= published
+    assert (published - derived).total_seconds() < 3600
+
+
+def test_reel_to_preview_maps_the_connection_struct(tmp_path: Path) -> None:
+    when = datetime(2026, 8, 23, 11, 9, 1, tzinfo=timezone.utc)
+    preview = InstaloaderService._reel_to_preview(_reel_media('ABC', _pk_for(when)), 'someuser')
+
+    assert preview is not None
+    assert preview.external_id == 'ABC'
+    assert preview.source_url == 'https://www.instagram.com/reel/ABC/'
+    assert preview.content_type == 'reel'
+    assert preview.thumbnail_url == 'https://cdn.example/r.jpg'
+    assert preview.author_username == 'someuser'
+    assert preview.profile_username == 'someuser'
+    # The connection carries no caption at any depth; it is filled in at
+    # download time instead of costing a request per reel at preview time.
+    assert preview.caption is None
+    assert abs((preview.posted_at - when).total_seconds()) < 1
+
+
+def test_reel_to_preview_skips_a_struct_with_no_code_or_pk(tmp_path: Path) -> None:
+    assert InstaloaderService._reel_to_preview({'pk': 1}, 'u') is None
+    assert InstaloaderService._reel_to_preview({'code': 'A'}, 'u') is None
+    assert InstaloaderService._reel_to_preview({'code': 'A', 'pk': 'not-a-number'}, 'u') is None
+
+
+def test_reel_to_preview_tolerates_a_missing_thumbnail(tmp_path: Path) -> None:
+    preview = InstaloaderService._reel_to_preview(
+        _reel_media('ABC', _pk_for(datetime(2026, 8, 23, tzinfo=timezone.utc)), thumb=None), 'someuser',
     )
-
-    assert profile.get_posts_calls == 1
-    # Same output as scanning twice: every timeline item under 'post'
-    # (carousels classified as such), plus the clips again under 'reel'.
-    assert [(i.external_id, i.content_type) for i in items] == [
-        ('p1', 'post'), ('r1', 'post'), ('c1', 'carousel'), ('r2', 'post'),
-        ('r1', 'reel'), ('r2', 'reel'),
-    ]
+    assert preview is not None and preview.thumbnail_url is None
 
 
 @pytest.mark.asyncio
-async def test_reels_only_does_not_return_ordinary_posts(
+async def test_reels_are_returned_even_when_the_timeline_has_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # THE regression. Round 6 read reels as the product_type=='clips' entries
+    # of the profile grid. Live testing found a real profile whose 25 grid
+    # posts and 15+ reels were entirely disjoint (a reel can be published with
+    # "don't show on profile grid"), so reels came back empty every time while
+    # posts worked fine.
     service = _make_service(tmp_path)
-    profile = _TimelineProfile(_mixed_timeline())
+    profile = _ReelsProfile(timeline=[
+        _fake_timeline_post('grid1', datetime(2026, 8, 20, tzinfo=timezone.utc), product_type='feed'),
+        _fake_timeline_post('grid2', datetime(2026, 8, 19, tzinfo=timezone.utc), product_type='carousel_container'),
+    ])
     monkeypatch.setattr(instaloader.Profile, 'from_username', staticmethod(lambda context, username: profile))
+    monkeypatch.setattr(
+        InstaloaderService, '_collect_reels',
+        lambda self, loader, prof, since, until: [
+            InstaloaderService._reel_to_preview(
+                _reel_media('reel1', _pk_for(datetime(2026, 8, 23, tzinfo=timezone.utc))), prof.username,
+            ),
+        ],
+    )
 
     items = await service.list_profile_items(
         'https://www.instagram.com/someuser/', [InstagramContentType.REEL],
     )
 
-    assert profile.get_posts_calls == 1
-    assert [(i.external_id, i.content_type) for i in items] == [('r1', 'reel'), ('r2', 'reel')]
+    assert [i.external_id for i in items] == ['reel1']
+    # And it must not have paged the grid at all to find them.
+    assert profile.get_posts_calls == 0
+
+
+def test_collect_reels_stops_at_the_date_bound_and_skips_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.infrastructure.instaloader_service as mod
+
+    service = _make_service(tmp_path)
+    profile = _ReelsProfile()
+    since = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    feed = [
+        _reel_media('pinned-old', _pk_for(datetime(2026, 1, 1, tzinfo=timezone.utc)), pinned=True),
+        _reel_media('recent', _pk_for(datetime(2026, 8, 26, tzinfo=timezone.utc))),
+        _reel_media('older', _pk_for(datetime(2026, 7, 1, tzinfo=timezone.utc))),
+        _reel_media('never-reached', _pk_for(datetime(2026, 6, 1, tzinfo=timezone.utc))),
+    ]
+    monkeypatch.setattr(mod.instaloader, 'NodeIterator', lambda **kwargs: iter(feed))
+
+    previews = service._collect_reels(SimpleNamespace(context=object()), profile, since, None)
+
+    assert [p.external_id for p in previews] == ['recent']
+
+
+def test_collect_reels_caps_when_no_date_range_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.infrastructure.instaloader_service as mod
+
+    monkeypatch.setattr(mod, '_MAX_ITEMS_WITHOUT_DATE_RANGE', 3)
+    service = _make_service(tmp_path)
+    when = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    consumed = 0
+
+    def endless():
+        nonlocal consumed
+        while True:
+            consumed += 1
+            yield _reel_media(f'r{consumed}', _pk_for(when))
+
+    monkeypatch.setattr(mod.instaloader, 'NodeIterator', lambda **kwargs: endless())
+
+    previews = service._collect_reels(SimpleNamespace(context=object()), _ReelsProfile(), None, None)
+
+    assert len(previews) == 3
+    assert consumed <= 4
+
+
+def test_collect_reels_asks_for_the_reels_connection_not_the_timeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.infrastructure.instaloader_service as mod
+
+    captured: dict = {}
+
+    def fake_iterator(**kwargs):
+        captured.update(kwargs)
+        return iter([])
+
+    monkeypatch.setattr(mod.instaloader, 'NodeIterator', fake_iterator)
+    _make_service(tmp_path)._collect_reels(SimpleNamespace(context=object()), _ReelsProfile(), None, None)
+
+    assert captured['doc_id'] == mod._REELS_DOC_ID
+    assert captured['query_variables']['data']['target_user_id'] == '1'
+    # The node_wrapper must hand back the raw struct. instaloader's own
+    # get_reels() wraps it in Post.from_shortcode(), which is one HTTP
+    # request per reel -- 15 reels took 179s live.
+    assert captured['node_wrapper']({'media': {'code': 'X'}}) == {'code': 'X'}
+
+
+# --- Round 7: downloads belong to the profile you browsed ---
+
+
+def test_post_preview_records_both_the_owner_and_the_browsed_profile(tmp_path: Path) -> None:
+    # Regression: Instagram credits a co-authored post to the collaborator
+    # (live-verified: a post browsed on `nasa` reported `nasajohnson`), so
+    # keying the download folder on the owner scattered one profile's
+    # download across other people's folders.
+    post = _fake_post('abc', datetime(2026, 8, 20, tzinfo=timezone.utc))
+    post.owner_username = 'a_collaborator'
+
+    preview = InstaloaderService._post_to_preview(post, InstagramContentType.POST, 'browsed_profile')
+
+    assert preview.author_username == 'a_collaborator'
+    assert preview.profile_username == 'browsed_profile'
+
+
+def test_download_target_uses_the_browsed_profile(tmp_path: Path) -> None:
+    service = _make_service(tmp_path)
+    directory = service._target_directory('browsed_profile', 'reel')
+    assert directory == tmp_path / 'downloads' / 'Instagram' / 'browsed_profile' / 'Reels'
+
+
+def test_highlights_land_in_the_same_profile_folder_as_posts(tmp_path: Path) -> None:
+    service = _make_service(tmp_path)
+    posts = service._target_directory('someuser', 'post')
+    highlights = service._target_directory('someuser', 'highlight')
+    assert posts.parent == highlights.parent
+    assert highlights.name == 'Highlights'
+
+
+# --- Round 7: archive-quality filenames and captions ---
+
+
+def test_filename_pattern_leads_with_the_date_and_keeps_the_shortcode(tmp_path: Path) -> None:
+    import app.infrastructure.instaloader_service as mod
+
+    rendered = mod._FILENAME_PATTERN.format(
+        date_utc=datetime(2026, 8, 23, 11, 9, 1), shortcode='DcYSnllvjCn',
+    )
+    assert rendered == '2026-08-23_11-09-01_DcYSnllvjCn'
+    # Colons would be mangled by instaloader's Windows path sanitizer, which
+    # is why this does not use instaloader's literal '{date_utc}_UTC' default.
+    assert ':' not in rendered
+
+
+def test_caption_sidecar_is_enabled_but_metadata_json_is_not(tmp_path: Path) -> None:
+    loader = _make_service(tmp_path)._build_loader()
+    assert loader.post_metadata_txt_pattern == '{caption}'
+    assert loader.save_metadata is False
+
+
+def test_download_glob_finds_a_date_prefixed_file_and_ignores_the_caption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _make_service(tmp_path)
+    monkeypatch.setattr(
+        instaloader.Post, 'from_shortcode',
+        staticmethod(lambda context, shortcode: SimpleNamespace(shortcode=shortcode)),
+    )
+
+    def fake_download_post(self, post, target):
+        directory = Path(self.dirname_pattern)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / '2026-08-23_11-09-01_ABC123.mp4').write_bytes(b'video')
+        (directory / '2026-08-23_11-09-01_ABC123.txt').write_text('the caption')
+        return True
+
+    monkeypatch.setattr(instaloader.Instaloader, 'download_post', fake_download_post)
+
+    result = service._download_sync(_download_job('https://www.instagram.com/reel/ABC123/'), 'someuser', 'reel')
+
+    assert Path(result.output_path).name == '2026-08-23_11-09-01_ABC123.mp4'
+
+
+# --- Round 7: exact caption/date backfilled onto the item at download time ---
+
+
+class _RecordingCollectionRepository:
+    def __init__(self, item) -> None:
+        self.item = item
+        self.metadata_updates: list[tuple] = []
+
+    async def get_item(self, item_id: str):
+        return self.item
+
+    async def update_item_metadata(self, item_id: str, *, caption, posted_at) -> None:
+        self.metadata_updates.append((item_id, caption, posted_at))
+
+
+def _collection_item(**overrides):
+    from app.domain.collections import CollectionItem
+
+    defaults = dict(
+        id='item-1', collection_id='c1', source_url='https://www.instagram.com/reel/ABC123/',
+        content_type='reel', author_username='someuser', caption=None,
+        thumbnail_url=None, external_id='ABC123', added_at=datetime.now(timezone.utc),
+        posted_at=None, profile_username='someuser',
+    )
+    defaults.update(overrides)
+    return CollectionItem(**defaults)
 
 
 @pytest.mark.asyncio
-async def test_reels_requested_before_posts_keeps_the_requested_order(
+async def test_download_backfills_the_exact_caption_and_date(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The shared scan is triggered by whichever bucket comes first; the
-    # response must still follow the order the caller asked for.
+    # A reel preview has no caption and only a media-id-derived approximation
+    # of the date. Downloading fetches the real post anyway, so the exact
+    # values are free at that point and should replace the estimate.
+    from app.domain.models import RequestContext
+
+    written = tmp_path / 'real.mp4'
+    written.write_bytes(b'video')
+    exact = datetime(2026, 8, 23, 11, 9, 1, tzinfo=timezone.utc)
+    repository = _RecordingCollectionRepository(_collection_item())
     service = _make_service(tmp_path)
-    profile = _TimelineProfile(_mixed_timeline())
-    monkeypatch.setattr(instaloader.Profile, 'from_username', staticmethod(lambda context, username: profile))
-
-    items = await service.list_profile_items(
-        'https://www.instagram.com/someuser/', [InstagramContentType.REEL, InstagramContentType.POST],
+    service.collection_repository = repository
+    monkeypatch.setattr(
+        InstaloaderService, '_download_sync',
+        lambda self, job, username, content_type: DownloadResult(
+            output_path=str(written), caption='the real caption', posted_at=exact,
+        ),
     )
 
-    assert profile.get_posts_calls == 1
-    assert [i.content_type for i in items] == ['reel', 'reel', 'post', 'post', 'carousel', 'post']
+    async def on_progress(job) -> None:
+        return None
+
+    await service.download(
+        _download_job('https://www.instagram.com/reel/ABC123/'),
+        context=RequestContext(), retries=0, on_progress=on_progress, collection_item_id='item-1',
+    )
+
+    assert repository.metadata_updates == [('item-1', 'the real caption', exact)]
 
 
-def test_scan_timeline_caps_each_bucket_independently(
+@pytest.mark.asyncio
+async def test_download_does_not_backfill_when_it_failed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import app.infrastructure.instaloader_service as instaloader_service_module
+    from app.domain.models import RequestContext
 
-    monkeypatch.setattr(instaloader_service_module, '_MAX_ITEMS_WITHOUT_DATE_RANGE', 3)
-    day = datetime(2026, 8, 20, tzinfo=timezone.utc)
-    # Every third item is a reel, so the post bucket fills long before the
-    # reel bucket does -- the scan must keep going until both are full.
-    timeline = [
-        _fake_timeline_post(f'i{n}', day, product_type='clips' if n % 3 == 0 else 'feed')
-        for n in range(30)
-    ]
-
-    posts, reels = InstaloaderService._scan_timeline(
-        iter(timeline), None, None, want_posts=True, want_reels=True,
+    repository = _RecordingCollectionRepository(_collection_item())
+    service = _make_service(tmp_path)
+    service.collection_repository = repository
+    monkeypatch.setattr(
+        InstaloaderService, '_download_sync',
+        lambda self, job, username, content_type: (_ for _ in ()).throw(RuntimeError('nope')),
     )
 
-    assert len(posts) == 3
-    assert len(reels) == 3
-    assert all(p.external_id in {'i0', 'i3', 'i6'} for p in reels)
+    async def on_progress(job) -> None:
+        return None
+
+    await service.download(
+        _download_job('https://www.instagram.com/reel/ABC123/'),
+        context=RequestContext(), retries=0, on_progress=on_progress, collection_item_id='item-1',
+    )
+
+    assert repository.metadata_updates == []
+
+
+@pytest.mark.asyncio
+async def test_download_folder_prefers_profile_username_over_author(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.domain.models import RequestContext
+
+    captured: list[str | None] = []
+    written = tmp_path / 'real.mp4'
+    written.write_bytes(b'video')
+    repository = _RecordingCollectionRepository(
+        _collection_item(author_username='a_collaborator', profile_username='browsed_profile'),
+    )
+    service = _make_service(tmp_path)
+    service.collection_repository = repository
+
+    def fake_sync(self, job, username, content_type):
+        captured.append(username)
+        return DownloadResult(output_path=str(written))
+
+    monkeypatch.setattr(InstaloaderService, '_download_sync', fake_sync)
+
+    async def on_progress(job) -> None:
+        return None
+
+    await service.download(
+        _download_job('https://www.instagram.com/p/ABC123/'),
+        context=RequestContext(), retries=0, on_progress=on_progress, collection_item_id='item-1',
+    )
+
+    assert captured == ['browsed_profile']
+
+
+@pytest.mark.asyncio
+async def test_download_folder_falls_back_to_author_for_pre_migration_items(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Items saved before profile_username existed have it as NULL.
+    from app.domain.models import RequestContext
+
+    captured: list[str | None] = []
+    written = tmp_path / 'real.mp4'
+    written.write_bytes(b'video')
+    repository = _RecordingCollectionRepository(
+        _collection_item(author_username='legacy_author', profile_username=None),
+    )
+    service = _make_service(tmp_path)
+    service.collection_repository = repository
+
+    def fake_sync(self, job, username, content_type):
+        captured.append(username)
+        return DownloadResult(output_path=str(written))
+
+    monkeypatch.setattr(InstaloaderService, '_download_sync', fake_sync)
+
+    async def on_progress(job) -> None:
+        return None
+
+    await service.download(
+        _download_job('https://www.instagram.com/p/ABC123/'),
+        context=RequestContext(), retries=0, on_progress=on_progress, collection_item_id='item-1',
+    )
+
+    assert captured == ['legacy_author']

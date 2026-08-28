@@ -64,6 +64,12 @@ class CollectionItem:
     added_at: datetime
     posted_at: datetime | None = None
     downloaded_job_id: str | None = None
+    # The profile this item was discovered under, which is not always the
+    # post's own owner: Instagram attributes a co-authored post to the
+    # collaborator, so author_username alone scattered one profile's
+    # download across other people's folders. Downloads and per-profile
+    # grouping key on this; author_username stays the true credit.
+    profile_username: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,3 +86,9 @@ class ProfileItemPreview:
     thumbnail_url: str | None
     external_id: str | None
     posted_at: datetime | None = None
+    # The profile this item was discovered under, which is not always the
+    # post's own owner: Instagram attributes a co-authored post to the
+    # collaborator, so author_username alone scattered one profile's
+    # download across other people's folders. Downloads and per-profile
+    # grouping key on this; author_username stays the true credit.
+    profile_username: str | None = None

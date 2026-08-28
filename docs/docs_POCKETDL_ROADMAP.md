@@ -656,32 +656,176 @@ null` without a network call, which is by design (Round 3).
 
 35 regression tests were added for the above (209 backend tests pass).
 
-### What's left
-The Phase 5 Instagram pilot is now feature-complete *and* live-verified
-end to end -- preview, session handling, and download all confirmed
-against a real signed-in session. Remaining, none of them blocking:
+### Round 7 — user testing on a real profile: reels came back empty, and four other gaps (done)
+Round 6's fix was verified only against `nasa`. User testing on
+`penvi_bomnyo` immediately found reels returning **zero** items while posts
+worked fine, plus a set of product gaps. Diagnosis and fixes below; a real
+session cookie now lives at `.secrets/instagram_session.json`
+(gitignored -- see "Test credentials" at the end of this section) so these
+paths can be re-verified without asking the user for one each time.
 
-- **Stories and highlights have still never been live-verified.** Only
-  posts, carousels and reels were exercised; the test account's own
-  profile had no stories to fetch. `_collect_stories`/`_collect_highlights`
-  still use `get_stories()`/`get_highlights()` directly and may well carry
-  a per-item cost similar to the `get_reels()` problem above -- worth
-  measuring before trusting them.
-- **Only one profile (`nasa`, public) was exercised.** A private profile
-  the session follows, and a profile the session does *not* follow, still
-  need checking for correct `InstagramAuthRequiredError` classification.
-- **`_MAX_ITEMS_WITHOUT_DATE_RANGE` (50) and `_MAX_POSTS_SCANNED` (200)
-  truncate silently.** The UI has no way to say "showing the 50 most
-  recent" or to ask for more. A cursor/"load more" would be the real fix.
-- Merging the pilot to `main`, and applying the same engine-swap lessons
-  to the next Phase 5 platform (gallery-dl remains in the tree, reserved
-  for it).
+#### 1. Reels came back empty — the Reels tab is not a subset of the grid
+Round 6 replaced `Profile.get_reels()` with "timeline entries where
+`product_type == 'clips'`", having verified on `nasa` that the two produced
+the same posts in the same order. That generalized badly. Measured on
+`penvi_bomnyo`:
+
+- Timeline: 25 posts (`mediacount=25`, i.e. the whole grid), **0 clips**
+- Reels tab: 15+ reels, **not one of them present in the timeline**
+
+The two collections are entirely disjoint on that account, because Instagram
+lets a reel be published without showing on the profile grid. So the Round 6
+approach returns nothing at all for such a profile, not merely "sometimes
+fewer".
+
+Going back to `get_reels()` was not an option either: re-measured at **15
+reels in 179 seconds**, because its `node_wrapper` issues a
+`Post.from_shortcode()` refetch per reel to fill in metadata the connection
+omits. Correct but unusable; Round 6's version was usable but wrong.
+
+**The fix takes neither.** `_collect_reels` drives the reels connection
+directly through `instaloader.NodeIterator` with a `node_wrapper` that hands
+back the raw media struct instead of refetching, so a page of 12 reels costs
+one request. The struct has `code`, `image_versions2` and
+`clips_tab_pinned_user_ids` but no `taken_at` and no `caption`. The date is
+recovered from the media `pk`, which is Snowflake-like:
+`(pk >> 23) + 1314220021721` ms. Validated against known-good dates:
+
+| shortcode | derived | true | delta |
+| --- | --- | --- | --- |
+| `Dbuhr-nvu3G` | 05:21:46 | 05:22:36 | −50s |
+| `DZXsJJyvkix` | 15:27:48 | 15:28:36 | −47s |
+| `DWytxt5DyRF` | 13:47:24 | 13:57:25 | −10m |
+| `DcYSnllvjCn` | 10:38:12 | 11:09:01 | −31m |
+
+Always early, by 47s to ~31min -- the pk is stamped when the upload begins,
+not when the post publishes. Good enough to sort by and to filter a
+day-granularity range with, and it is treated as an approximation, not
+presented as exact: see #5 below for how it gets corrected.
+
+Result on the same profile: **50 reels in 23.2s**, versus 0 items before.
+
+#### 2. Downloads scattered across other people's folders
+`_post_to_preview` set `author_username` from `post.owner_username`, and the
+download folder keyed on that. Instagram credits a co-authored post to the
+collaborator (live-verified: a post browsed on `nasa` reports
+`nasajohnson`), so downloading one profile spread its files across other
+users' folders.
+
+`ProfileItemPreview`/`CollectionItem` now carry a separate
+`profile_username` -- the profile the item was *discovered under* -- with an
+idempotent column migration. Downloads key on it, falling back to
+`author_username` for rows saved before the column existed;
+`author_username` stays the true credit. To answer the question that
+prompted this: highlights, stories, posts and reels for one profile all land
+under `Instagram/<profile>/`, in `Posts`/`Reels`/`Stories`/`Highlights`.
+
+#### 3. Adding the same item twice silently duplicated it
+`collection_items` had no uniqueness constraint, so previewing a profile
+again and re-adding the same selection duplicated every row. Now a unique
+index on `(collection_id, COALESCE(external_id, source_url))` -- the
+COALESCE because stories/highlights have no shortcode, and SQLite treats
+NULLs in a unique index as distinct. `add_item` became an upsert that
+returns the row already stored, so re-adding is a quiet no-op rather than an
+error.
+
+Databases written before this can already contain duplicates, which would
+make `CREATE UNIQUE INDEX` fail on exactly the databases that need it, so
+`_ensure_item_uniqueness` collapses them first, keeping the earliest row of
+each group so a recorded `downloaded_job_id` is not thrown away.
+
+#### 4. Filenames lost the date, and captions were not written
+Round 6 set `filename_pattern='{shortcode}_{typename}'` and
+`post_metadata_txt_pattern=''`, the latter reasoning that the caption is
+already in the database. Both were wrong for an archive that should be
+readable without PocketDL, and the user pointed out that instaloader's own
+defaults already do the right thing (`'{date_utc}_UTC'` and `'{caption}'`).
+
+Filenames are now `{date_utc:%Y-%m-%d_%H-%M-%S}_{shortcode}` -- date first
+so a folder sorts chronologically, shortcode retained so the name is
+collision-free and a generated gallery can link back to the post.
+instaloader's literal default renders with colons, which hit the same
+Windows `sanitize_path` mangling documented in Round 6, hence the explicit
+format spec. The `<basename>.txt` caption sidecar is back on; the heavier
+per-post JSON stays off. Note instaloader writes no sidecar when a post's
+caption is empty (`if metadata_string:`) -- that is expected, not a failure.
+
+Existing downloads keep their old names by the user's explicit choice: no
+rename migration, they will delete and re-download the handful affected.
+
+#### 5. Exact caption and date backfilled at download time
+The consequence of #1 is that a reel preview has no caption and an
+approximate date. But downloading fetches the real post anyway, so
+`_download_sync` now returns a `DownloadResult` carrying the exact caption
+and `date_utc`, and `download()` writes them onto the collection item.
+Live-verified: the stored item's `posted_at` moved from the derived
+`2026-08-23T10:38:12` to the true `2026-08-23T11:09:01` once downloaded.
+`update_item_metadata` only ever fills gaps -- a reel with genuinely no
+caption never blanks one that discovery did supply.
+
+#### 6. Polling does not, and must not, reach Instagram
+The user asked whether the PWA's polling could get the account
+rate-limited. It cannot, and that is now a tested contract rather than a
+comment. The 2s refresh loop calls `/api/downloads`, `/api/system/status`,
+`/api/captures` and `/api/settings` -- all local (SQLite plus memoised
+version strings; `versions()` caches, so no subprocess per tick). The panel
+reads `/api/instagram/session` once on mount, and that route deliberately
+does not verify (Round 3).
+
+`tests/test_polling_does_not_hit_instagram.py` trips an assertion if any
+polled endpoint reaches `InstaloaderService`, and asserts the converse --
+that explicit verification still does -- so the tripwire cannot be satisfied
+by simply breaking verification. This required the project's first
+HTTP-level test harness, the `api_client` fixture in `tests/conftest.py`,
+which builds the real app against a throwaway database.
+
+#### Live verification (real session, `penvi_bomnyo`)
+| Call | Result |
+| --- | --- |
+| Reels preview, no date range | **50 items, 23.2s** (was 0 items) |
+| Posts + reels, no date range | 75 items, 27.3s |
+| Posts, `posted_after` set | 3 items, 8.7s, correct cutoff |
+| Add same item twice | 1 row in the playlist |
+| Download | `Instagram/penvi_bomnyo/Reels/2026-08-23_11-09-01_DcYSnllvjCn.mp4` |
+| Carousel download | 6 images + one shared `.txt` caption sidecar |
+| "Download all" again | 0 jobs queued -- completed items skipped |
+
+235 backend tests pass (up from 209).
+
+#### Test credentials
+`.secrets/` is gitignored (whole directory, so a future platform's test
+session can be dropped in without touching `.gitignore` again).
+`.secrets/instagram_session.json` holds a real browser session export used
+to exercise these paths against live data. It is a full account credential,
+not a scoped token: never commit it, never log it, never echo it into a
+response or a test fixture.
+
+### What's left
+- **Stories and Highlights have still never been live-verified**, and
+  `_collect_stories`/`_collect_highlights` still call
+  `get_stories()`/`get_highlights()` directly -- they may carry the same
+  per-item refetch cost `get_reels()` did. Measure before trusting.
+- **Only public profiles tested.** A private profile the session follows,
+  and one it does not, still need checking for correct
+  `InstagramAuthRequiredError` classification.
+- **Silent truncation.** `_MAX_ITEMS_WITHOUT_DATE_RANGE` (50) and
+  `_MAX_POSTS_SCANNED` (200) cut results with no signal to the user and no
+  way to ask for more. `NodeIterator.freeze()`/`thaw()` is the primitive for
+  a real resumable cursor; the API should report "N shown, more available".
+- **UI responsiveness**, the user's most-felt complaint: replace the 2s poll
+  with SSE (the backend has no WebSocket endpoint at all -- the `/ws` line
+  in `apps/web/vite.config.ts` is unused), proxy thumbnails through the
+  backend so a 100-card grid is not racing the Instagram CDN against a
+  6-connection-per-host cap, and stop re-rendering whole lists on unchanged
+  data.
+- **Playlist UX**: no select-all in preview, and no way to filter or group a
+  playlist by content type or download state, so a playlist mixing
+  already-downloaded posts with newly-added highlights is hard to act on.
+- Merging the pilot to `main`.
 
 ### Resuming this work
-On branch `feature/phase5-instagram-collections`, not yet merged to
-`main`. The session cookie used for Round 6 verification is *not* stored
-in the repo; re-supply one through the app's Instagram session control to
-re-run any of the live checks above.
+On branch `feature/phase5-instagram-collections`, not yet merged to `main`.
+The session cookie in `.secrets/` makes every live check above repeatable.
 
 ---
 
