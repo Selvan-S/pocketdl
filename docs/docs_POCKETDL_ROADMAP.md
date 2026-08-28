@@ -482,23 +482,73 @@ Live-verified against real Instagram servers with a fake cookie
 afterward: the same class of call that used to hang now fails cleanly in
 7 seconds. UI hint text updated to mention the cap.
 
+### Round 5 — second real-credential attempt: preview still times out, and Verify breaks after reload (open, not yet diagnosed)
+After Round 4's fix, the same real session cookie was retried against the
+same profile: preview now fails cleanly instead of hanging, but still hits
+the 90s `InstaloaderTimeoutError` -- Instagram is not responding in time
+even with the shorter per-request timeout, not just failing to respond
+*eventually*. Two new reports from this attempt, neither fixed yet:
+
+1. **Preview still times out at 90s against a real profile with a real
+   session.** Round 4's fix (shorter per-request timeout, item cap, outer
+   wait_for) reduced a 5+ minute hang to a clean 90s failure, but 90s is
+   still a failure, not success -- something is still slow or being
+   throttled even after the fixes. Not yet known whether this is
+   Instagram-side rate-limiting of this specific session (plausible: this
+   session had already made a failed 5-minute-hang attempt shortly before,
+   and this project's own earlier testing independently observed Instagram
+   returning "please wait a few minutes before you try again" 401s), a
+   remaining unbounded-request-count issue elsewhere in
+   `InstaloaderService`, or something else. **Needs a real cookie to
+   actually reproduce and step through** -- the user has offered to
+   provide one next session, which is the actual unlock here: every prior
+   round's testing (including Round 4's fix verification) only ever used
+   a fake cookie, which fails fast in a way that never exercises this
+   slow-real-session path at all.
+2. **Session verification breaks after a page reload and does not recover
+   via the Verify button** -- only fixed by clearing the session and
+   re-pasting the cookie. Confirmed by reading the code (not yet
+   reproduced live): `GET /api/instagram/session` deliberately never calls
+   `verify_session()` (by design, to avoid a network call on every poll --
+   see Round 3), so showing "unverified" immediately after a reload is
+   *expected*, not the bug. The actual bug is that clicking **Verify**
+   afterward doesn't succeed either. Leading hypothesis: the preceding
+   failed/slow preview attempt got this specific session throttled by
+   Instagram, and the Verify click's `test_session()` call (same
+   `InstaloaderService`, same 90s cap since Round 4) keeps hitting that
+   same throttling and timing out too -- which would mean the cookie file
+   on disk was never actually broken, and simply waiting out Instagram's
+   cooldown (not clearing+re-pasting) would likely have also worked. This
+   is a hypothesis, not a confirmed diagnosis; a genuine bug in
+   `SessionControl`'s state handling on the frontend, or in how
+   `save_session_cookie`/`clear_session_cookie` interact, has not been
+   ruled out. A real cookie makes this directly testable: reload, click
+   Verify, observe whether it actually times out (supporting the
+   throttling theory) or fails some other way (pointing at a real bug).
+
 ### What's left
-Only the one gate no round could reach: a **real signed-in profile preview
-has never been seen to return real items**, because no real Instagram
-login credentials have been available during any of the four rounds --
-Round 4 above was the first attempt with a real cookie, and it hit an
-infrastructure bug (now fixed) before it could reach that check. Everything
-code-shaped is done -- this needs a person with an actual Instagram account
-to paste a real session cookie and try the profile browser once, now that
-it won't hang. When that happens and it works, this section can finally be
-marked fully done; if it fails, the failure mode itself is the next
-actionable bug report.
+The one gate no round has cleared -- a real signed-in preview actually
+returning real items -- plus the two new Round 5 reports above, which
+block reaching that gate. **The user is providing a real Instagram session
+cookie next session specifically to unblock this**, which changes what's
+testable: every round so far (including Round 4's own fix verification)
+only ever used a fake cookie, which fails fast and never exercises the
+slow-real-session path Round 5 hit. With a real cookie, next session
+should be able to: reproduce the 90s timeout directly and inspect what
+instaloader is actually doing during it (add temporary verbose
+logging/`--print-traffic`-equivalent if needed), reproduce the
+reload-then-Verify failure and determine whether it's Instagram-side
+throttling or a real bug, and -- if both clear -- finally see whether a
+real preview returns real, correctly-mapped items at all.
 
 ### Resuming this work
-On branch `feature/phase5-instagram-collections`, 23 commits ahead of
-`main` as of this update, working tree clean, not yet pushed. Nothing left
-to "resume" in the code-writing sense -- the only remaining step is the
-manual real-credential check described above.
+On branch `feature/phase5-instagram-collections`, working tree clean, not
+yet pushed to `main`. Next session should start by getting the real
+session cookie from the user, configuring it via the running app's
+Instagram session control (or directly via `POST /api/instagram/session`
+during testing), and reproducing Round 5's two open reports before
+attempting any fix -- both are still hypotheses, not confirmed root
+causes.
 
 ---
 
