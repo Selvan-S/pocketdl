@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Instagram: fix authenticated preview and downloads (Phase 5)
+First round with a real Instagram session cookie available for testing.
+Preview had been timing out at 90s and downloads had never actually worked.
+Four distinct bugs in `InstaloaderService`, all found by reproducing against
+instaloader directly with per-HTTP-request timing.
+
+- **The engine was never logged in.** Sessions were attached with
+  `context.update_cookies()`, which pushes cookies into the requests session
+  but leaves `context.username` unset — the exact thing `context.is_logged_in`
+  tests — and never sets the `X-CSRFToken` header. `Profile.get_posts()`
+  branches on `is_logged_in`, and its anonymous branch got a 302 to the
+  Instagram homepage, surfaced as a misleading `ConnectionException: JSON
+  Query to graphql/query: Expecting value`. Now uses `context.load_session()`,
+  which sets both; the username behind a pasted cookie is resolved and cached
+  by session verification, so the normal flow costs no extra request.
+- **Reels no longer use `Profile.get_reels()`.** Its connection omits
+  `taken_at`/`caption`/`user.username`, so instaloader refetches every reel
+  individually — measured at 5 reels in 70s across 17 requests, i.e. ~10
+  minutes for the 50-item cap, which is what the 90s timeout was catching.
+  Reels are now the `product_type == 'clips'` entries of the ordinary
+  timeline: verified to be the same posts in the same order, with complete
+  metadata, 12 per request.
+- **Date filtering no longer stops at a pinned post.** Instagram serves
+  pinned posts at the head of the timeline regardless of age, so the
+  "everything after this is older" early-exit could return nothing at all.
+  Pinned entries are now skipped rather than ending the scan.
+- **Downloads wrote nothing and reported success.** The absolute target
+  directory was passed as `download_post(target=...)`, which instaloader
+  substitutes into `dirname_pattern` and sanitizes — on Windows rewriting
+  `:` and `\` into lookalike characters, creating one literal mojibake
+  directory under the working directory while still returning `True`. The
+  job was then marked completed with no output file. The target directory is
+  now a literal `dirname_pattern`, and a download is never reported complete
+  unless the file exists on disk.
+- Posts and reels now share a single timeline scan instead of paging the
+  same feed once per bucket (100 items in 45s, down from 63s).
+
+Live-verified end to end through the HTTP API against a real session and a
+real profile: preview returns real captions/dates/authors/thumbnails with
+correct post/carousel/reel classification, session verify works including
+after a reload, and a reel and a carousel both downloaded real files to the
+correct folders. 35 regression tests added.
+
 ### Capture quality selection: master/variant manifest grouping (0.2.4)
 The repeatedly-deferred backlog item from Phase 2 and Phase 4. An HLS master
 playlist advertises the same video at several qualities, each as its own

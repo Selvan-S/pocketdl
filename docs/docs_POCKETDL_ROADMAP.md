@@ -526,29 +526,162 @@ even with the shorter per-request timeout, not just failing to respond
    Verify, observe whether it actually times out (supporting the
    throttling theory) or fails some other way (pointing at a real bug).
 
+### Round 6 — real session cookie in hand: root-caused and fixed; first successful authenticated preview (done)
+The user supplied a real Instagram session cookie, which was the unlock
+every prior round was waiting on. Reproducing directly against instaloader
+with per-HTTP-request timing (rather than through the UI) found that the
+session itself was never the problem -- individual Instagram requests
+answered in ~0.8s throughout. Four distinct bugs came out of it, all fixed.
+
+**1. `update_cookies()` never actually logged instaloader in.** The engine
+attached the stored cookies with `InstaloaderContext.update_cookies()`,
+which only pushes cookies into the requests session. It does *not* set
+`context.username` -- which is precisely what `context.is_logged_in`
+tests -- and it does *not* set the `X-CSRFToken` request header. So every
+request ran as an anonymous scraper that merely happened to be carrying a
+valid cookie. Consequences, both live-verified:
+
+* `Profile.get_posts()` branches on `is_logged_in`. On the anonymous
+  branch, Instagram answered its doc_id query with a **302 to the
+  homepage**, which instaloader surfaced as
+  `ConnectionException: JSON Query to graphql/query: Expecting value:
+  line 1 column 1 (char 0)`. Profile posts therefore failed outright, not
+  slowly. This is very likely the same phenomenon as the gallery-dl
+  "AbortExtraction: HTTP redirect to home page" recorded in Round 2 --
+  i.e. that was probably never about a bad cookie or a private profile
+  either.
+* On the logged-in branch the identical call returns full per-post
+  metadata (date, caption, owner, media URLs), 12 items per request, with
+  no follow-up request per item.
+
+Fixed by switching to `context.load_session(username, pairs)`, which sets
+both. The username behind a pasted cookie isn't known up front, so
+`_build_loader` uses a placeholder (any truthy value satisfies
+`is_logged_in`) and `test_session()` caches the real username, keyed by
+the cookie so replacing the session invalidates it. Zero extra requests in
+the normal flow, since the UI verifies a cookie right after it is pasted.
+
+**2. `get_reels()` costs one extra HTTP request per reel, by design.** This
+was the actual cause of the 90s preview timeout. instaloader's reels
+connection returns a media struct with no `taken_at`, `caption`, or
+`user.username` -- verified to be missing whether logged in or not -- so
+its own `node_wrapper` issues a `Post.from_shortcode()` refetch for every
+single reel (instaloader's source comments say as much). Measured live:
+**5 reels in 70s across 17 HTTP requests**, i.e. ~12-14s per reel once
+instaloader's `sleep=True` courtesy delays are included. The 50-item cap
+added in Round 4 therefore implied ~10 minutes of work, so the 90s outer
+timeout was doing exactly what it should.
+
+Fixed by not calling `get_reels()` at all: reels are read as the
+`product_type == 'clips'` entries of the ordinary timeline, which returns
+complete metadata 12 items per request. The clips entries were verified to
+be *exactly* the same posts, in the same order, that `get_reels()`
+produced -- the same five shortcodes, in 3 requests instead of 17.
+`_MAX_POSTS_SCANNED = 200` bounds the scan, since filtering means more
+posts are read than reels are kept.
+
+**3. Pinned posts broke the date-range early-exit.** `_collect_posts` broke
+out of the loop at the first post older than `since`, on the assumption
+that the timeline is strictly reverse-chronological. It isn't: Instagram
+serves pinned posts at the head of the timeline regardless of age. Live
+example -- a profile whose first three timeline entries (Aug 19, Aug 18,
+Aug 12) all predated its fourth (Aug 27). A `since` of Aug 20 would have
+returned nothing at all. Pinned entries carry a non-empty
+`timeline_pinned_user_ids`; they are now skipped rather than treated as
+the start of the older tail.
+
+**4. Downloads wrote nothing and still reported success.** Not one of the
+reported bugs -- found while verifying the rest, and the more serious
+find. `_download_sync` passed the absolute target directory as
+`download_post(target=...)`. instaloader substitutes that into its
+`dirname_pattern` via `_PostPathFormatter`, which runs every *substituted*
+value through `sanitize_path()` -- and on Windows that rewrites `:` to a
+fullwidth colon and `\` to a small reverse solidus **unconditionally**
+(the `sanitize_paths` constructor flag only forces that behaviour on
+non-Windows; it does not disable it). The absolute path therefore became a
+single literal directory name, mojibake and all, created under the
+process's working directory. `download_post()` still returned `True`, the
+`target_dir.glob()` found nothing, `output_path` came back `None` -- and
+`download()` marked the job **COMPLETED** anyway. So Instagram downloads
+had never once worked, and said they had.
+
+Fixed three ways: the target directory now goes into `dirname_pattern` as
+a literal (patterns are not sanitized, only substituted values, so it
+round-trips; braces are escaped for `str.format`); `_download_sync` raises
+instead of returning `None` when the target directory is empty; and
+`download()` refuses to report COMPLETED unless the output file actually
+exists on disk.
+
+**5. Posts and reels paged the same timeline twice.** Found while measuring
+the fix. Both buckets are views of `Profile.get_posts()`, so requesting
+both -- the common "everything" selection -- scanned it once per bucket:
+63s for 100 items, uncomfortably close to the 90s budget. `_scan_timeline`
+now reads the timeline once and fills both buckets, with each bucket
+keeping its own item cap. Same 100 items in **45s**.
+
+#### Live verification (real session cookie, real profile, `nasa`)
+Through the real HTTP API, with the real `InstaloaderService`:
+
+| Call | Result |
+| --- | --- |
+| `POST /api/instagram/session` | 200, `verified_username` returned, 1.8s |
+| `GET` then `POST /api/instagram/session/verify` | 200, verified, 2.7s |
+| `POST /api/instagram/profile/preview` posts+reels, no date range | 200, **100 items, 45.1s** |
+| `POST /api/instagram/profile/preview` posts, `posted_after` set | 200, 8 items, 9.4s |
+| `DELETE /api/instagram/session` | 200, status returns to unconfigured |
+
+Preview items carry real captions, real dates, real author usernames
+(including co-authored posts attributed to the co-author), working
+thumbnail URLs, and correct `post`/`carousel`/`reel` classification -- so
+the JSON field-mapping that had been implemented-but-unverified since
+Round 1 is now confirmed against real authenticated data.
+
+Downloads were verified end-to-end too: a reel wrote a 5.3 MB
+`Dcea3BiPTBm_GraphVideo.mp4` (ffprobe: h264 + aac, 41.2s) into
+`Instagram/<user>/Posts/`, and a carousel wrote both of its images. No
+stray sanitized directories are created any more.
+
+**This clears the gate no previous round had cleared:** a successful
+authenticated profile preview returning real, correctly-mapped items.
+
+Round 5's second report -- "session verification breaks after reload and
+does not recover via Verify" -- did not reproduce once the login wiring
+above was fixed: `POST /api/instagram/session/verify` returns the verified
+username in under 3s, including after a reload with an already-stored
+cookie. The Round 5 hypothesis that this was Instagram-side throttling was
+probably wrong; the more likely explanation is that Verify shared the same
+broken anonymous-session path as everything else. `GET
+/api/instagram/session` still deliberately reports `verified_username:
+null` without a network call, which is by design (Round 3).
+
+35 regression tests were added for the above (209 backend tests pass).
+
 ### What's left
-The one gate no round has cleared -- a real signed-in preview actually
-returning real items -- plus the two new Round 5 reports above, which
-block reaching that gate. **The user is providing a real Instagram session
-cookie next session specifically to unblock this**, which changes what's
-testable: every round so far (including Round 4's own fix verification)
-only ever used a fake cookie, which fails fast and never exercises the
-slow-real-session path Round 5 hit. With a real cookie, next session
-should be able to: reproduce the 90s timeout directly and inspect what
-instaloader is actually doing during it (add temporary verbose
-logging/`--print-traffic`-equivalent if needed), reproduce the
-reload-then-Verify failure and determine whether it's Instagram-side
-throttling or a real bug, and -- if both clear -- finally see whether a
-real preview returns real, correctly-mapped items at all.
+The Phase 5 Instagram pilot is now feature-complete *and* live-verified
+end to end -- preview, session handling, and download all confirmed
+against a real signed-in session. Remaining, none of them blocking:
+
+- **Stories and highlights have still never been live-verified.** Only
+  posts, carousels and reels were exercised; the test account's own
+  profile had no stories to fetch. `_collect_stories`/`_collect_highlights`
+  still use `get_stories()`/`get_highlights()` directly and may well carry
+  a per-item cost similar to the `get_reels()` problem above -- worth
+  measuring before trusting them.
+- **Only one profile (`nasa`, public) was exercised.** A private profile
+  the session follows, and a profile the session does *not* follow, still
+  need checking for correct `InstagramAuthRequiredError` classification.
+- **`_MAX_ITEMS_WITHOUT_DATE_RANGE` (50) and `_MAX_POSTS_SCANNED` (200)
+  truncate silently.** The UI has no way to say "showing the 50 most
+  recent" or to ask for more. A cursor/"load more" would be the real fix.
+- Merging the pilot to `main`, and applying the same engine-swap lessons
+  to the next Phase 5 platform (gallery-dl remains in the tree, reserved
+  for it).
 
 ### Resuming this work
-On branch `feature/phase5-instagram-collections`, working tree clean, not
-yet pushed to `main`. Next session should start by getting the real
-session cookie from the user, configuring it via the running app's
-Instagram session control (or directly via `POST /api/instagram/session`
-during testing), and reproducing Round 5's two open reports before
-attempting any fix -- both are still hypotheses, not confirmed root
-causes.
+On branch `feature/phase5-instagram-collections`, not yet merged to
+`main`. The session cookie used for Round 6 verification is *not* stored
+in the repo; re-supply one through the app's Instagram session control to
+re-run any of the live checks above.
 
 ---
 

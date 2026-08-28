@@ -34,12 +34,13 @@ phase-by-phase status — the summary below is kept short and can lag it.
   `feature/phase5-instagram-collections`, backend and UI both, now on
   instaloader as the live Instagram engine (swapped from gallery-dl
   mid-build for typed errors and real date-range filtering; gallery-dl
-  kept, unremoved, reserved for the next Phase 5 platform). The UI's
-  date-range filters and session-verification badge are wired and
-  live-verified in a real browser — see the roadmap's Phase 5 "What's
-  left" list. One gate no round has cleared: a successful authenticated
-  profile preview has never been live-verified (no login credentials
-  available in any build so far) — see the roadmap's Phase 5 section.
+  kept, unremoved, reserved for the next Phase 5 platform). As of
+  2026-08-28 it is also live-verified end to end against a real session
+  cookie: authenticated profile preview returns real, correctly-mapped
+  posts/carousels/reels, session verify works, and downloads write real
+  files to the right folders. Stories and Highlights are the part still
+  never exercised live — see the roadmap's Phase 5 "Round 6" and "What's
+  left".
 
 ## Current architecture
 ```text
@@ -101,6 +102,15 @@ Therefore every Instagram profile fetch needs an authenticated session cookie to
 Second live finding (2026-08-27, real pasted session cookie, real profile): gallery-dl returned `AbortExtraction: HTTP redirect to home page (https://www.instagram.com/)` even with a session cookie configured. Traced to `extractor/instagram.py`'s `request()` wrapper: any Instagram response whose final URL (after following redirects) is the bare homepage (a URL 24-28 chars long ending in `/`) raises this, distinct from its explicit "login"/"challenge" page detection. A valid-looking cookie does not guarantee gallery-dl's request succeeds -- a private profile the session's account doesn't follow, or Instagram fingerprinting gallery-dl's request as non-browser traffic, both produce this same bounce. Not yet root-caused to one specific cause. This result plus the original NotFoundError finding motivated evaluating instaloader as a purpose-built alternative for Instagram specifically -- see docs/docs_POCKETDL_ROADMAP.md Phase 5.
 
 Third live finding (2026-08-28, first attempt with a real session cookie on the instaloader engine): a real profile preview (Reels selected, no date range) hung for 5+ minutes with the request "Stalled" in Chrome DevTools, and the 2s polling requests piling up behind it made the tab sluggish to scroll. Two compounding gaps, both since fixed in `InstaloaderService`: (1) instaloader's own defaults are `request_timeout=300s` per HTTP call with `max_connection_attempts=3` retries, and nothing wrapped the `asyncio.to_thread` calls in an outer timeout -- fixed with `request_timeout=20s`/`max_connection_attempts=2` plus `asyncio.wait_for` around every public method. (2) With no `since` date bound, pagination had nothing to stop it early, so an active profile's *entire* history got paged through, one request per page plus instaloader's own rate-limit courtesy delay between them -- fixed with a 50-item cap when no date range is given. Re-verified live afterward (fake cookie): same call now fails cleanly in 7s. See docs/docs_POCKETDL_ROADMAP.md Phase 5 "Round 4" for the full writeup.
+
+Fourth live finding (2026-08-28, real session cookie, real public profile, instaloader 4.15.3) — this is the one that made an authenticated Instagram preview work for the first time, and it supersedes several earlier guesses above. Four bugs, all fixed in `InstaloaderService`:
+
+1. **`context.update_cookies()` does not log instaloader in.** It only pushes cookies into the requests session: it leaves `context.username` unset — which is exactly what `context.is_logged_in` tests — and never sets the `X-CSRFToken` header. Every request therefore ran as an anonymous scraper that happened to carry a valid cookie. `Profile.get_posts()` branches on `is_logged_in`, and its anonymous branch got a **302 to the Instagram homepage**, surfaced as the misleading `ConnectionException: JSON Query to graphql/query: Expecting value: line 1 column 1 (char 0)`. Use `context.load_session(username, pairs)` instead, which sets both. Note this very likely also explains gallery-dl's "AbortExtraction: HTTP redirect to home page" in the second finding above — that was probably never about a bad cookie or a private profile.
+2. **`Profile.get_reels()` costs one extra HTTP request per reel by design.** Its connection returns a media struct with no `taken_at`/`caption`/`user.username` (logged in or not), so instaloader's own `node_wrapper` does a `Post.from_shortcode()` refetch per reel — measured at 5 reels in 70s across 17 requests. Read reels as the `product_type == 'clips'` entries of the ordinary timeline instead: same posts, same order, complete metadata, 12 per request.
+3. **The Instagram timeline is not strictly reverse-chronological.** Pinned posts are served at the head regardless of age (verified: three entries dated Aug 19/18/12 ahead of one dated Aug 27). Any "stop once older than `since`" early-exit must skip entries with a non-empty `timeline_pinned_user_ids` rather than treat them as the start of the older tail.
+4. **Never pass an absolute path as instaloader's `download_post(target=...)`.** Substituted pattern values go through `_PostPathFormatter.sanitize_path()`, which on Windows rewrites `:` and `\` to lookalike characters *unconditionally* (the `sanitize_paths` constructor flag only forces that behaviour on non-Windows; it does not disable it). The absolute path became one literal mojibake directory under the working directory, `download_post()` still returned `True`, and the job was marked COMPLETED with no file — so Instagram downloads had never worked and said they had. Put the directory in `dirname_pattern` as a literal (patterns are not sanitized, only substituted values), and never report a download complete without confirming the file exists.
+
+Preview, session verification and download are now all live-verified end to end against a real signed-in session; Stories and Highlights are not, and may carry a per-item cost like (2). See docs/docs_POCKETDL_ROADMAP.md Phase 5 "Round 6".
 
 ## Current known bugs / backlog
 1. Duplicate captured cards — mostly fixed (signed-token normalization,
