@@ -75,6 +75,7 @@ export const api = {
   setInstagramSession: (cookieHeader: string) =>
     request<InstagramSessionStatus>('/instagram/session', { method: 'POST', body: JSON.stringify({ cookie_header: cookieHeader }) }),
   clearInstagramSession: () => request<{ ok: true }>('/instagram/session', { method: 'DELETE' }),
+  verifyInstagramSession: () => request<InstagramSessionStatus>('/instagram/session/verify', { method: 'POST' }),
 
   listCollections: () => request<Collection[]>('/collections'),
   createCollection: (name: string) => request<Collection>('/collections', { method: 'POST', body: JSON.stringify({ platform: 'instagram', name }) }),

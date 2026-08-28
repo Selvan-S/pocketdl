@@ -14,6 +14,25 @@ const CONTENT_TYPES: Array<{ value: InstagramContentType; label: string }> = [
   { value: 'highlight', label: 'Highlights' },
 ];
 
+// <input type="date"> yields a bare "YYYY-MM-DD"; widen it to that day's UTC
+// boundaries so the backend's since/until comparison (against tz-aware
+// post_date values, see InstaloaderService) gets a tz-aware datetime rather
+// than a naive one, and so "posted before <date>" still includes that date.
+function dateInputToRangeStart(value: string): string | undefined {
+  return value ? `${value}T00:00:00.000Z` : undefined;
+}
+
+function dateInputToRangeEnd(value: string): string | undefined {
+  return value ? `${value}T23:59:59.999Z` : undefined;
+}
+
+function formatPostedAt(postedAt: string | null): string | null {
+  if (!postedAt) return null;
+  const parsed = new Date(postedAt);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 export function InstagramPanel({ onMessage, onDownloadQueued }: Props) {
   const [session, setSession] = useState<InstagramSessionStatus | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -58,6 +77,7 @@ function SessionControl({
   const [expanded, setExpanded] = useState(false);
   const [cookie, setCookie] = useState('');
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
@@ -70,7 +90,11 @@ function SessionControl({
       onChange(next);
       setCookie('');
       setExpanded(false);
-      onMessage('Instagram session saved.');
+      onMessage(
+        next.verified_username
+          ? `Instagram session saved -- verified as @${next.verified_username}.`
+          : 'Instagram session saved, but verification failed. Double-check the cookie is current.',
+      );
     } catch (caughtError) {
       // Also shown inline (not just via onMessage) since the shared message
       // banner lives at the top of the page, far from this form.
@@ -82,11 +106,27 @@ function SessionControl({
     }
   }
 
+  async function verify() {
+    setVerifying(true);
+    setError(null);
+    try {
+      const next = await api.verifyInstagramSession();
+      onChange(next);
+      onMessage(next.verified_username ? `Session verified as @${next.verified_username}.` : 'Session verification failed.');
+    } catch (caughtError) {
+      const text = caughtError instanceof Error ? caughtError.message : 'Unable to verify the session.';
+      setError(text);
+      onMessage(text);
+    } finally {
+      setVerifying(false);
+    }
+  }
+
   async function clear() {
     setBusy(true);
     try {
       await api.clearInstagramSession();
-      onChange({ configured: false });
+      onChange({ configured: false, verified_username: null });
       onMessage('Instagram session cleared.');
     } finally {
       setBusy(false);
@@ -97,8 +137,17 @@ function SessionControl({
     <div className="instagram-session">
       <div className="instagram-session-status">
         <span className={`status-badge ${session?.configured ? 'used' : ''}`}>
-          {session?.configured ? 'Session configured' : 'No session configured'}
+          {session?.configured
+            ? session.verified_username
+              ? `Verified as @${session.verified_username}`
+              : 'Session configured (unverified)'
+            : 'No session configured'}
         </span>
+        {session?.configured && (
+          <button type="button" className="link-button" disabled={verifying} onClick={() => void verify()}>
+            {verifying ? 'Verifying…' : 'Verify'}
+          </button>
+        )}
         <button
           type="button"
           className="link-button"
@@ -152,6 +201,8 @@ function ProfileBrowser({
 }) {
   const [profileUrl, setProfileUrl] = useState('');
   const [selectedTypes, setSelectedTypes] = useState<InstagramContentType[]>(['post', 'reel']);
+  const [postedAfter, setPostedAfter] = useState('');
+  const [postedBefore, setPostedBefore] = useState('');
   const [items, setItems] = useState<ProfileItemPreview[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -176,12 +227,21 @@ function ProfileBrowser({
   async function preview() {
     const url = profileUrl.trim();
     if (!url || selectedTypes.length === 0) return;
+    if (postedAfter && postedBefore && postedAfter > postedBefore) {
+      setError('"Posted after" must not be later than "posted before".');
+      return;
+    }
     setLoading(true);
     setError(null);
     setItems([]);
     setSelected(new Set());
     try {
-      const result = await api.previewInstagramProfile({ profile_url: url, content_types: selectedTypes });
+      const result = await api.previewInstagramProfile({
+        profile_url: url,
+        content_types: selectedTypes,
+        posted_after: dateInputToRangeStart(postedAfter),
+        posted_before: dateInputToRangeEnd(postedBefore),
+      });
       setItems(result.items);
       if (result.items.length === 0) onMessage('No items found for the selected content types.');
     } catch (caughtError) {
@@ -247,6 +307,17 @@ function ProfileBrowser({
             </label>
           ))}
         </div>
+        <div className="instagram-date-range">
+          <label>
+            Posted after
+            <input type="date" value={postedAfter} onChange={(event) => setPostedAfter(event.target.value)} />
+          </label>
+          <label>
+            Posted before
+            <input type="date" value={postedBefore} onChange={(event) => setPostedBefore(event.target.value)} />
+          </label>
+          <span className="field-help">Only applies to posts and reels -- stories and highlights aren&apos;t date-filterable.</span>
+        </div>
         <button disabled={loading || !profileUrl.trim() || selectedTypes.length === 0} onClick={() => void preview()}>
           {loading ? 'Loading…' : 'Preview profile'}
         </button>
@@ -269,6 +340,7 @@ function ProfileBrowser({
                   <div className="instagram-item-placeholder" />
                 )}
                 <span className="instagram-item-type">{item.content_type}</span>
+                {formatPostedAt(item.posted_at) && <span className="instagram-item-date">{formatPostedAt(item.posted_at)}</span>}
                 {item.caption && <span className="instagram-item-caption">{item.caption}</span>}
               </button>
             ))}
@@ -434,7 +506,10 @@ function PlaylistCard({
                 <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} />
                 {item.thumbnail_url ? <img src={item.thumbnail_url} alt="" loading="lazy" /> : <div className="instagram-item-placeholder" />}
                 <div className="playlist-item-meta">
-                  <span>{item.content_type}</span>
+                  <span>
+                    {item.content_type}
+                    {formatPostedAt(item.posted_at) && ` · ${formatPostedAt(item.posted_at)}`}
+                  </span>
                   {item.caption && <span className="filename">{item.caption}</span>}
                   {item.downloaded_job_id && <span className="status-badge used">Downloaded</span>}
                 </div>

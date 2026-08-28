@@ -151,6 +151,10 @@ export type InstagramContentType = 'post' | 'carousel' | 'reel' | 'story' | 'hig
 export interface InstagramProfilePreviewRequest {
   profile_url: string;
   content_types?: InstagramContentType[];
+  /** ISO datetime strings. Only applied to posts/reels -- stories/highlights
+   * aren't meaningfully date-bounded, see InstaloaderService. */
+  posted_after?: string;
+  posted_before?: string;
 }
 
 export interface ProfileItemPreview {
@@ -160,6 +164,7 @@ export interface ProfileItemPreview {
   caption: string | null;
   thumbnail_url: string | null;
   external_id: string | null;
+  posted_at: string | null;
 }
 
 export interface InstagramProfilePreviewResponse {
@@ -168,6 +173,9 @@ export interface InstagramProfilePreviewResponse {
 
 export interface InstagramSessionStatus {
   configured: boolean;
+  /** Set only right after a successful save, or by the explicit verify
+   * call -- not populated by every status poll. */
+  verified_username: string | null;
 }
 
 export interface Collection {
@@ -189,6 +197,7 @@ export interface CollectionItem {
   thumbnail_url: string | null;
   external_id: string | null;
   added_at: string;
+  posted_at: string | null;
   downloaded_job_id: string | null;
 }
 

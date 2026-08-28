@@ -337,9 +337,9 @@ implementation, same as the Instagram plan's gallery-dl-on-Termux spike.
 
 ## Instagram pilot — implementation progress (branch feature/phase5-instagram-collections)
 
-**Status: backend feature-complete on the instaloader engine; UI still on
-the old gallery-dl-era shape. Stopped here deliberately to hand off to a
-fresh session — see "Resuming this work" at the end of this section.**
+**Status: backend and UI both feature-complete on the instaloader engine.
+One gate remains, and it needs real credentials, not more code — see
+"What's left" below.**
 
 ### Round 1 — gallery-dl pilot (superseded as Instagram's live engine, kept as infrastructure)
 Built the full vertical slice bottom-up (domain -> DB -> infra -> app -> API
@@ -416,31 +416,55 @@ Landed, each its own commit:
   `verified_username: null` rather than crashing. This is the concrete
   fix for the session confusion hit earlier in this session.
 
-### What's left (the ~30% this session stopped before)
-**UI only** — no more backend work needed for this round:
-- `apps/web/src/types/api.ts` / `api/client.ts`: add `posted_at` to
-  `ProfileItemPreview`/`CollectionItem`, `posted_after`/`posted_before` to
-  the preview request, `verified_username` to the session status type, and
-  a client method for `POST /api/instagram/session/verify`.
-- `InstagramPanel.tsx`: date-range inputs on the profile browser form
-  (wire into `previewInstagramProfile`'s new params); show `posted_at` on
-  preview/playlist item cards; show `verified_username` after saving a
-  session cookie (this directly replaces the old "did my cookie even work"
-  guessing from earlier in this session with a real answer).
-- Live-verify in a real browser afterward (Playwright + a fresh dev-server
-  pair, same pattern used earlier this session), then a final docs pass
-  marking the pilot fully done once a *real* signed-in preview has been
-  seen to return real items -- the one gate that has never been cleared in
-  either round, since no real login credentials were available during
-  either build.
+### Round 3 — UI wiring (this session)
+Closed the UI gap Round 2 left open, no backend changes needed:
+- `apps/web/src/types/api.ts` / `api/client.ts`: `posted_at` added to
+  `ProfileItemPreview`/`CollectionItem`; `posted_after`/`posted_before`
+  added to `InstagramProfilePreviewRequest`; `verified_username` added to
+  `InstagramSessionStatus`; `api.verifyInstagramSession()` calls
+  `POST /api/instagram/session/verify`.
+- `InstagramPanel.tsx`: `ProfileBrowser` gained `<input type="date">`
+  "Posted after"/"Posted before" fields, converted to UTC day-boundary ISO
+  strings before the request (`dateInputToRangeStart`/`dateInputToRangeEnd`
+  -- date-only strings would parse as tz-naive on the backend and crash
+  comparing against instaloader's tz-aware `post_date`, see
+  `InstaloaderService._collect_posts`) and client-side validated
+  (after > before rejected before the request). `formatPostedAt` renders
+  `posted_at` on both profile-preview cards and saved-playlist items.
+  `SessionControl` now shows "Verified as @username" /
+  "Session configured (unverified)" instead of a flat configured/not
+  badge, plus an explicit "Verify" button calling the new endpoint --
+  replaces the old guesswork about whether a pasted cookie actually works.
+- Live-verified in a real headless browser (Playwright, installed fresh
+  into the scratchpad since it wasn't already on this machine; a
+  dev-server pair on 8787/5173): expanded the Instagram section, saved a
+  cookie and watched the badge go to "Session Configured (Unverified)"
+  with Verify/Replace/Clear all present, clicked Verify and got a clean
+  re-check (no crash), filled both date inputs and submitted -- request
+  carried `posted_after`/`posted_before` as UTC ISO strings and the
+  backend responded with a typed `ValueError` ("profile does not exist"),
+  not a stack trace. Also smoke-tested the same four endpoints directly
+  with curl beforehand for the same result. This is exactly as far as
+  verification can go without a real login: with a fake cookie,
+  `verified_username` correctly stays `null` and nothing crashes -- the
+  actual "does a real signed-in preview return real items" check below is
+  still open because it was never reachable, not because it was skipped.
+
+### What's left
+Only the one gate neither engine round nor this UI-wiring round could
+reach: a **real signed-in profile preview has never been seen to return
+real items**, because no real Instagram login credentials have been
+available during any of the three rounds. Everything code-shaped is done
+-- this needs a person with an actual Instagram account to paste a real
+session cookie and try the profile browser once. When that happens and it
+works, this section can finally be marked fully done; if it fails, the
+failure mode itself is the next actionable bug report.
 
 ### Resuming this work
-On branch `feature/phase5-instagram-collections`, 20 commits ahead of
-`main` as of this pause, working tree clean. To continue in a fresh
-session, say: **"Continue the Instagram pilot UI wiring for date-range
-filtering and session verification -- see docs/docs_POCKETDL_ROADMAP.md's
-Phase 5 'What's left' list."** That list is the actual spec; nothing else
-needs re-deriving.
+On branch `feature/phase5-instagram-collections`, working tree has this
+round's UI commit on top of the 20 commits from before, not yet pushed to
+`main`. Nothing left to "resume" in the code-writing sense -- the only
+remaining step is the manual real-credential check described above.
 
 ---
 

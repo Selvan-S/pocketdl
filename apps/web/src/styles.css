@@ -362,6 +362,9 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 .instagram-browser { display: grid; gap: 14px; }
 .instagram-browser-form { display: grid; gap: 10px; }
 .instagram-content-types { display: flex; flex-wrap: wrap; gap: 8px; }
+.instagram-date-range { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.instagram-date-range label { display: grid; gap: 4px; font-size: 12px; color: #8390a9; }
+.instagram-date-range .field-help { flex-basis: 100%; }
 .checkbox-chip {
   display: flex;
   align-items: center;
@@ -394,6 +397,7 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 .instagram-item-card.selected { border-color: #4c7dff; box-shadow: 0 0 0 1px #4c7dff inset; background: #131d33; }
 .instagram-item-card img, .instagram-item-placeholder { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #182036; }
 .instagram-item-type { font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: #9fc6ff; }
+.instagram-item-date { font-size: 11px; color: #7f8da8; }
 .instagram-item-caption { font-size: 11px; color: #8390a9; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 .instagram-add-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
