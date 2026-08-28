@@ -18,6 +18,11 @@ import type {
 
 const API_BASE = '/api';
 
+/** URL of the server-sent event stream that replaced polling. Exported as a
+ * URL rather than wrapped in a helper because EventSource is constructed and
+ * owned by the component that subscribes. */
+export const EVENTS_URL = `${API_BASE}/events`;
+
 // FastAPI error bodies are JSON ({"detail": "message"} for a raised
 // HTTPException, {"detail": [{"msg": "...", ...}, ...]} for a pydantic
 // validation error) -- without this, every failed request surfaced its raw

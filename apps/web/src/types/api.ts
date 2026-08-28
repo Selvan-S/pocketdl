@@ -215,3 +215,14 @@ export interface CollectionDownloadRequest {
   concurrent_fragments?: number;
   retries?: number;
 }
+
+/** One `state` frame from GET /api/events -- everything the old 2s refresh
+ * loop used to fetch from four separate endpoints. A field is null when the
+ * server could not build that part, which must not blank out what the UI is
+ * already showing. */
+export interface ServerStateEvent {
+  downloads: DownloadItem[] | null;
+  status: SystemStatus | null;
+  captures: CaptureItem[] | null;
+  settings: SettingsResponse | null;
+}

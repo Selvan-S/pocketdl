@@ -10,6 +10,7 @@ from .api.routes import router
 from .core.config import get_settings
 from .core.logging import configure_logging
 from .application.downloads.service import QueueService
+from .application.events import ChangeNotifier
 from .application.captures.service import CaptureService
 from .application.collections.service import CollectionService
 from .application.instagram.discovery import ProfileDiscoveryService
@@ -50,9 +51,14 @@ async def lifespan(app: FastAPI):
     gallery_dl = GalleryDlService(settings, collection_repository)
     instaloader_service = InstaloaderService(settings, collection_repository)
     downloader = YtDlpService(settings, captured_media, gallery_dl, instaloader_service)
-    queue = QueueService(repository, downloader, settings.max_concurrent_downloads, capture_repository, collection_repository)
+    change_notifier = ChangeNotifier()
+    queue = QueueService(
+        repository, downloader, settings.max_concurrent_downloads, capture_repository, collection_repository,
+        on_change=change_notifier.notify,
+    )
     profile_discovery_service = ProfileDiscoveryService(instaloader_service)
     collection_service = CollectionService(collection_repository, queue)
+    app.state.change_notifier = change_notifier
     app.state.settings = settings
     app.state.default_download_directory = default_download_directory
     app.state.repository = repository
@@ -79,6 +85,20 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
+@app.middleware('http')
+async def notify_on_mutation(request, call_next):
+    """Wake the SSE stream after any request that could have changed state.
+
+    Catching it here rather than at each mutating route means a new endpoint
+    cannot forget to do it. Download *progress* is pushed separately by
+    QueueService, since that changes state without any request at all.
+    """
+    response = await call_next(request)
+    if request.method not in ('GET', 'HEAD', 'OPTIONS') and response.status_code < 400:
+        app.state.change_notifier.notify()
+    return response
+
+
 app.include_router(router)
 
 WEB_DIST = Path(__file__).resolve().parents[3] / 'apps' / 'web' / 'dist'

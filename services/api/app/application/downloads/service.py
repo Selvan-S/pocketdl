@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -32,7 +33,13 @@ class QueueService:
         max_concurrent: int,
         capture_repository: CaptureRepository | None = None,
         collection_repository: CollectionRepository | None = None,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
+        # Fired on every progress update so a subscriber (the SSE stream) can
+        # push instead of being polled. Progress changes state without any
+        # HTTP request, so it is the one place the request middleware cannot
+        # cover. Optional so tests can construct a queue without one.
+        self._on_change = on_change
         self.repository = repository
         self.downloader = downloader
         self.capture_repository = capture_repository
@@ -41,6 +48,11 @@ class QueueService:
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.contexts: dict[str, RequestContext] = {}
         self.options: dict[str, JobOptions] = {}
+
+    async def _record_progress(self, job: DownloadJob) -> None:
+        await self.repository.update(job)
+        if self._on_change is not None:
+            self._on_change()
 
     async def create(
         self,
@@ -129,7 +141,7 @@ class QueueService:
                     capture_id=capture_id,
                     audio_url=options.audio_url,
                     collection_item_id=collection_item_id,
-                    on_progress=self.repository.update,
+                    on_progress=self._record_progress,
                 )
                 if capture_id and self.capture_repository:
                     finished = await self.repository.get(job_id)

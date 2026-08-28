@@ -76,6 +76,14 @@ _REELS_CONNECTION_KEY = 'xdt_api__v1__clips__user__connection_v2'
 _IG_ID_EPOCH_MS = 1314220021721
 _IG_ID_TIMESTAMP_SHIFT = 23
 
+# Preview cards are small and there can be a hundred of them on screen at
+# once. Instagram offers the same image at a dozen sizes; `Post.url` is the
+# *original* -- measured at 3024x4032 on a real profile -- so a preview grid
+# was pulling multiple megabytes per card and locking up the browser, which
+# was the single biggest cause of the reported UI slowness. Pick the smallest
+# rendition that still looks sharp on a retina card instead.
+_THUMBNAIL_TARGET_WIDTH = 320
+
 # instaloader's own default request_timeout is 300s (five minutes) *per HTTP
 # request*, with max_connection_attempts=3 retries on top -- live-verified
 # to actually hang a real preview call for 5+ minutes against a real
@@ -313,7 +321,11 @@ class InstaloaderService:
             author_username=post.owner_username,
             profile_username=profile_username,
             caption=post.caption or None,
-            thumbnail_url=post.url,
+            # post.url is the full-size original; only fall back to it when
+            # the timeline struct offers nothing smaller.
+            thumbnail_url=InstaloaderService._pick_thumbnail(
+                InstaloaderService._media_struct(post), fallback=post.url,
+            ),
             external_id=post.shortcode,
             posted_at=post.date_utc.replace(tzinfo=timezone.utc),
         )
@@ -386,13 +398,25 @@ class InstaloaderService:
         return datetime.fromtimestamp(millis / 1000, tz=timezone.utc)
 
     @staticmethod
-    def _reel_thumbnail(media: dict) -> str | None:
+    def _pick_thumbnail(media: dict, fallback: str | None = None) -> str | None:
+        """Smallest rendition at least _THUMBNAIL_TARGET_WIDTH wide, falling
+        back to the largest available when every candidate is smaller.
+
+        Instagram lists candidates largest-first and mixes aspect ratios
+        (a 4:5 set followed by a square set), so this sorts by width rather
+        than trusting the order.
+        """
         candidates = (media.get('image_versions2') or {}).get('candidates') or []
-        for candidate in candidates:
-            url = candidate.get('url')
-            if url:
-                return url
-        return None
+        sized = [
+            (candidate.get('width') or 0, candidate['url'])
+            for candidate in candidates
+            if isinstance(candidate, dict) and candidate.get('url')
+        ]
+        if not sized:
+            return fallback
+        big_enough = [entry for entry in sized if entry[0] >= _THUMBNAIL_TARGET_WIDTH]
+        chosen = min(big_enough, key=lambda entry: entry[0]) if big_enough else max(sized, key=lambda entry: entry[0])
+        return chosen[1]
 
     @staticmethod
     def _reel_to_preview(media: dict, username: str | None) -> ProfileItemPreview | None:
@@ -416,7 +440,7 @@ class InstaloaderService:
             # Not in the connection payload at any depth; filled in at
             # download time. See _IG_ID_EPOCH_MS.
             caption=None,
-            thumbnail_url=InstaloaderService._reel_thumbnail(media),
+            thumbnail_url=InstaloaderService._pick_thumbnail(media),
             external_id=code,
             posted_at=posted_at,
         )

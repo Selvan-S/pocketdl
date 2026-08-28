@@ -44,6 +44,27 @@ phase-by-phase status — the summary below is kept short and can lag it.
   where the open items are pagination (results truncate silently at 50)
   and UI responsiveness (replace the 2s poll with SSE).
 
+## Live updates
+The PWA does not poll. `GET /api/events` is a server-sent event stream
+carrying one snapshot of downloads/status/captures/settings, and it only
+emits when that snapshot actually changes. Waking is via
+`ChangeNotifier` (`app/application/events.py`), fired by an HTTP middleware
+after any successful non-GET request and by `QueueService` on download
+progress, with a 15s heartbeat as backstop.
+
+The notifier is deliberately **level-triggered** (a version counter, not a
+bare broadcast): a subscriber spends most of its cycle building and writing
+its snapshot rather than waiting, and an edge-triggered signal fired in that
+window is lost. Read `notifier.version` *before* building a snapshot and
+pass it to `wait(since=...)`.
+
+Two constraints on anything added here. Nothing reachable by the stream, or
+by a route the client polls as a fallback, may call out to a platform API --
+see `tests/test_polling_does_not_hit_instagram.py`. And httpx's
+`ASGITransport` buffers responses to completion, so SSE cannot be tested
+through the `api_client` fixture; drive the route's `body_iterator` directly
+as `tests/test_events_stream.py` does.
+
 ## Current architecture
 ```text
 apps/

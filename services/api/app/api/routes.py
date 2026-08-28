@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from .schemas import (
     AnalyzeRequest,
@@ -337,6 +339,90 @@ async def delete_capture(capture_id: str, request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=404, detail='Capture not found')
     await request.app.state.capture_repository.delete(capture_id)
     return {'ok': True}
+
+
+# How long an idle stream waits before rebuilding its snapshot anyway. The
+# notifier wakes it immediately on any real change, so this is purely a
+# safety net for a mutation nobody instrumented -- and it doubles as the
+# keepalive that stops an idle connection being dropped by a proxy.
+_EVENT_HEARTBEAT_SECONDS = 15.0
+# Floor between two pushes. A running download updates progress many times a
+# second; without this the stream would be chattier than the 2s poll it
+# replaced.
+_EVENT_MIN_INTERVAL_SECONDS = 0.4
+
+
+async def _event_snapshot(request: Request) -> dict:
+    """Everything the PWA's old refresh loop fetched, in one payload.
+
+    Deliberately calls the same handlers the individual endpoints do rather
+    than re-querying, so the two can never disagree.
+    """
+    downloads, system, captures, settings_payload = await asyncio.gather(
+        list_downloads(request),
+        system_status(request),
+        list_captures(request),
+        get_settings_route(request),
+        return_exceptions=True,
+    )
+
+    def ok(value):
+        return None if isinstance(value, BaseException) else value
+
+    return {
+        'downloads': [item.model_dump(mode='json') for item in (ok(downloads) or [])],
+        'status': (payload.model_dump(mode='json') if (payload := ok(system)) else None),
+        'captures': [item.model_dump(mode='json') for item in (ok(captures) or [])],
+        'settings': (payload.model_dump(mode='json') if (payload := ok(settings_payload)) else None),
+    }
+
+
+@router.get('/events')
+async def events(request: Request) -> StreamingResponse:
+    """Server-sent stream replacing the PWA's 2s poll of four endpoints.
+
+    SSE rather than a WebSocket: the traffic is entirely server-to-client,
+    it is plain HTTP so it survives the Termux/reverse-proxy setup without
+    an upgrade path, browsers reconnect on their own, and it needs no extra
+    dependency.
+
+    The stream only emits when the snapshot actually differs from the one
+    already sent, so an idle app receives nothing but comment-only
+    keepalives and never re-renders.
+    """
+    notifier = request.app.state.change_notifier
+
+    async def stream():
+        last_payload: str | None = None
+        # Tell the browser how long to wait before reconnecting if the
+        # connection drops (default is 3s, which is unnecessarily eager).
+        yield 'retry: 5000\n\n'
+        while True:
+            # Read the version *before* building, so a change landing while
+            # this snapshot is being built or throttled is still waiting for
+            # us at the bottom of the loop rather than lost.
+            seen = notifier.version
+            payload = json.dumps(await _event_snapshot(request), default=str)
+            if payload != last_payload:
+                last_payload = payload
+                yield f'event: state\ndata: {payload}\n\n'
+            else:
+                # A comment line: keeps the connection (and any proxy in
+                # front of it) alive without waking the client's handler.
+                yield ': keepalive\n\n'
+            await asyncio.sleep(_EVENT_MIN_INTERVAL_SECONDS)
+            await notifier.wait(since=seen, timeout=_EVENT_HEARTBEAT_SECONDS)
+
+    return StreamingResponse(
+        stream(),
+        media_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache, no-transform',
+            # nginx and friends buffer streamed responses by default, which
+            # would hold every event until the buffer filled.
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 
 @router.get('/settings', response_model=SettingsResponse)

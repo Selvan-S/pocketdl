@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### UI responsiveness: stop shipping full-size images and stop polling
+The reported slowness had three causes, and the preview request's own
+latency was not one of them.
+
+- **Preview thumbnails were the full-size originals** -- `post.url` measured
+  3024x4032 on a real profile, rendered up to 100 at a time. Now the
+  smallest rendition at least 320px wide. Measured across 25 cards on the
+  reported profile: **10.22 MB to 0.62 MB, 16.5x smaller.**
+- **Replaced the 2s poll of four endpoints with server-sent events** at
+  `GET /api/events`. The stream only emits when the snapshot actually
+  differs from the last one sent, so an idle app receives keepalives and
+  nothing else. Waking is driven by a middleware that fires after any
+  successful mutating request, plus download progress ticks, plus a 15s
+  heartbeat so correctness never depends on every call site. The client
+  falls back to polling if EventSource is unavailable or the stream errors.
+  SSE rather than WebSocket: server-to-client only, plain HTTP so it
+  survives the Termux/proxy setup, native reconnect, no new dependency.
+- **The client no longer re-renders on unchanged data** -- each pushed
+  section is compared and the previous value returned when it matches, so
+  React bails out of the render.
+
 ### Instagram: reels were coming back empty, and four archive/UX gaps (Phase 5)
 Found by user testing on a second real profile. The previous release read
 reels by filtering the profile grid, which had been verified against only one

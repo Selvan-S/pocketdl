@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from './api/client';
+import { api, EVENTS_URL } from './api/client';
 import { DownloadForm } from './components/DownloadForm';
 import { DownloadList } from './components/DownloadList';
 import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
-import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, DownloadCreateRequest, DownloadItem, SettingsResponse, SystemStatus } from './types/api';
+import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, DownloadCreateRequest, DownloadItem, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
 import './styles.css';
+
+/** Structural equality by serialisation. The payloads here are small,
+ * JSON-derived, and compared once per pushed frame, so this is cheaper than
+ * the re-render it avoids -- and unlike a hand-written comparison it cannot
+ * go stale when a field is added to the API. */
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
 
 export default function App() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
@@ -59,11 +67,62 @@ export default function App() {
     }
   }, []);
 
+  // Applies a pushed snapshot, but only where something actually differs.
+  // Returning the previous array unchanged makes React bail out of the
+  // re-render entirely -- the old 2s poll replaced these arrays on every
+  // tick, so the download and capture lists re-rendered constantly even
+  // when idle, which is a large part of why the page felt sluggish.
+  const applyServerState = useCallback((snapshot: ServerStateEvent) => {
+    setConnected(true);
+    if (snapshot.downloads) setDownloads((current) => (sameJson(current, snapshot.downloads) ? current : snapshot.downloads!));
+    if (snapshot.captures) setCaptures((current) => (sameJson(current, snapshot.captures) ? current : snapshot.captures!));
+    if (snapshot.status) setStatus((current) => (sameJson(current, snapshot.status) ? current : snapshot.status));
+    if (snapshot.settings) setSettings((current) => (sameJson(current, snapshot.settings) ? current : snapshot.settings));
+  }, []);
+
   useEffect(() => {
+    // Seed the UI immediately; the stream's first frame arrives a moment
+    // later and is deduped against this by applyServerState.
     refresh().catch((error: unknown) => setMessage(error instanceof Error ? error.message : 'Failed to load'));
-    const timer = window.setInterval(() => refresh().catch(() => undefined), 2000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+
+    let pollTimer: number | undefined;
+    const startPolling = () => {
+      if (pollTimer === undefined) pollTimer = window.setInterval(() => refresh().catch(() => undefined), 2000);
+    };
+    const stopPolling = () => {
+      if (pollTimer !== undefined) window.clearInterval(pollTimer);
+      pollTimer = undefined;
+    };
+
+    if (typeof EventSource === 'undefined') {
+      startPolling();
+      return () => stopPolling();
+    }
+
+    const source = new EventSource(EVENTS_URL);
+    source.addEventListener('state', (event) => {
+      // A working stream makes the fallback poll redundant.
+      stopPolling();
+      try {
+        applyServerState(JSON.parse((event as MessageEvent<string>).data) as ServerStateEvent);
+      } catch {
+        // A malformed frame is not worth tearing the stream down over; the
+        // next one carries the same full snapshot.
+      }
+    });
+    source.onerror = () => {
+      // EventSource reconnects on its own, but the backend may also be
+      // genuinely down -- poll meanwhile so the UI still recovers, and stop
+      // again as soon as a frame arrives.
+      setConnected(false);
+      startPolling();
+    };
+
+    return () => {
+      source.close();
+      stopPolling();
+    };
+  }, [refresh, applyServerState]);
 
   // Supports the extension popup's "Open" action (?capture=<id>): scrolls to
   // and briefly highlights the matching capture once it has loaded, then

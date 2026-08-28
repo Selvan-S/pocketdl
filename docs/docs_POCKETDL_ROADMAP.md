@@ -800,6 +800,96 @@ to exercise these paths against live data. It is a full account credential,
 not a scoped token: never commit it, never log it, never echo it into a
 response or a test fixture.
 
+### Round 8 — UI responsiveness: the browser was downloading 16x more image than it needed, and being woken every 2s (done)
+The user's most-felt complaint. Three compounding causes, all fixed; none of
+them was the one originally suspected (the preview request's own latency).
+
+#### 1. Preview thumbnails were the full-size originals
+`_post_to_preview` sent `post.url`, which is the *original* upload --
+measured at **3024x4032** on a real profile. Instagram offers the same image
+at a dozen renditions in `image_versions2.candidates`, and the reels
+connection was likewise handing back the 640px entry because it took
+`candidates[0]`. A preview grid renders up to 100 of these at once.
+
+`_pick_thumbnail` now takes the smallest rendition at least 320px wide
+(sorting by width, since Instagram lists candidates largest-first and then
+appends a second set at a different aspect ratio, so position means nothing).
+Measured on the reported profile by summing `Content-Length` across every
+card:
+
+| | 25 post cards |
+| --- | --- |
+| Before (`post.url`) | **10.22 MB** |
+| After (~320px rendition) | **0.62 MB** |
+| | **16.5x smaller** |
+
+At the 50-100 card sizes a real preview returns, the old behaviour was tens
+of megabytes of image, against a browser cap of ~6 connections per host.
+This was the dominant cause of the page becoming hard to scroll.
+
+#### 2. The 2s poll woke the client whether or not anything had changed
+`App.tsx` polled four endpoints every two seconds unconditionally, replacing
+the `downloads` and `captures` arrays each time, so React re-rendered both
+lists constantly even on a completely idle app.
+
+Replaced with server-sent events at `GET /api/events`. SSE rather than a
+WebSocket: the traffic is entirely server-to-client, it is plain HTTP so it
+survives the Termux/reverse-proxy setup with no upgrade path, browsers
+reconnect on their own, and it needs no new dependency. (The backend had no
+WebSocket endpoint at all -- the `/ws` line in `apps/web/vite.config.ts` was
+aspirational and unused.)
+
+The stream compares each snapshot against the last one it sent and emits a
+comment-only keepalive instead when they match, so an idle app receives
+nothing that reaches its handler. Waking is driven by `ChangeNotifier`:
+
+- An HTTP middleware fires it after any non-GET request that succeeded, so a
+  new mutating route cannot forget to.
+- `QueueService` fires it on every download progress tick, which changes
+  state without any request at all.
+- Each stream also has a 15s heartbeat, so correctness never depends on
+  every mutation site remembering.
+
+**The notifier is level-triggered, not edge-triggered**, and this was a real
+bug caught by its own test rather than by review. A subscriber spends most of
+its cycle *not* waiting -- building a snapshot, writing it, then throttling
+400ms before the next -- and a plain broadcast fired inside that window was
+simply lost, stranding the client until the next heartbeat: 15 seconds of
+apparently frozen UI. Each notification now bumps a version, and a subscriber
+reads the version *before* building its snapshot and waits on "has it moved
+past that", which cannot miss a change however the two interleave.
+
+The client keeps `refresh()` as a fallback: if `EventSource` is missing or
+the stream errors, it resumes the 2s poll and stops again as soon as a frame
+arrives.
+
+#### 3. Re-rendering on unchanged data
+Even with pushes, applying every snapshot would replace the arrays and
+re-render. `applyServerState` compares each section and returns the previous
+value unchanged when it matches, which makes React bail out of the render
+entirely.
+
+#### Verification
+Backend behaviour is covered by `tests/test_events_stream.py`, which drives
+the route's own body iterator -- httpx's `ASGITransport` buffers a response
+to completion before returning it and therefore cannot consume an endless
+stream at all, so an HTTP-level test of SSE is not possible with the current
+test client.
+
+Verified over real HTTP against `uvicorn`: an idle stream sends one state
+frame and then nothing; a `PUT /api/settings` produced a second frame
+carrying the new value within the throttle window; `GET /` and
+`GET /api/events` are served from the same origin, and the built bundle
+really does construct an `EventSource` against `/api/events`.
+
+**Not machine-verified:** the browser-side behaviour itself. There is no
+browser automation in this environment, so whether the page *feels* faster is
+the user's call. The thumbnail measurement above is objective; the SSE
+behaviour is verified server-side and by unit test, but nobody has watched
+it drive a real page.
+
+251 backend tests pass (up from 235).
+
 ### What's left
 - **Stories and Highlights have still never been live-verified**, and
   `_collect_stories`/`_collect_highlights` still call
@@ -812,12 +902,12 @@ response or a test fixture.
   `_MAX_POSTS_SCANNED` (200) cut results with no signal to the user and no
   way to ask for more. `NodeIterator.freeze()`/`thaw()` is the primitive for
   a real resumable cursor; the API should report "N shown, more available".
-- **UI responsiveness**, the user's most-felt complaint: replace the 2s poll
-  with SSE (the backend has no WebSocket endpoint at all -- the `/ws` line
-  in `apps/web/vite.config.ts` is unused), proxy thumbnails through the
-  backend so a 100-card grid is not racing the Instagram CDN against a
-  6-connection-per-host cap, and stop re-rendering whole lists on unchanged
-  data.
+- **UI responsiveness** is addressed in Round 8 above, but only the
+  server side is verified -- whether the page actually feels better is
+  still unconfirmed by anyone but the user. A backend thumbnail proxy was
+  considered and *not* built: it would not lift the browser's
+  per-host connection cap, and picking a smaller rendition removed 94% of
+  the bytes without adding an SSRF-shaped endpoint.
 - **Playlist UX**: no select-all in preview, and no way to filter or group a
   playlist by content type or download state, so a playlist mixing
   already-downloaded posts with newly-added highlights is hard to act on.

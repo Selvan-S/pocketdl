@@ -1084,3 +1084,84 @@ async def test_download_folder_falls_back_to_author_for_pre_migration_items(
     )
 
     assert captured == ['legacy_author']
+
+
+# --- P1: preview thumbnails must not be the full-size original ---
+
+
+def _candidates(*sizes: tuple[int, int]) -> dict:
+    return {'image_versions2': {'candidates': [
+        {'width': w, 'height': h, 'url': f'https://cdn.example/{w}x{h}.jpg'} for w, h in sizes
+    ]}}
+
+
+def test_pick_thumbnail_takes_the_smallest_rendition_that_is_big_enough(tmp_path: Path) -> None:
+    # Regression: a preview grid of 25 cards pulled 10.22 MB because posts
+    # sent post.url, the full-size original (measured at 3024x4032 on a real
+    # profile). Picking the ~320px rendition made the same grid 0.62 MB.
+    media = _candidates((3024, 4032), (1080, 1440), (640, 853), (320, 427), (240, 320))
+
+    assert InstaloaderService._pick_thumbnail(media) == 'https://cdn.example/320x427.jpg'
+
+
+def test_pick_thumbnail_ignores_instagrams_ordering(tmp_path: Path) -> None:
+    # Instagram lists candidates largest-first and appends a second set at a
+    # different aspect ratio, so position says nothing about size.
+    media = _candidates((640, 1136), (240, 426), (1080, 1080), (320, 320))
+
+    assert InstaloaderService._pick_thumbnail(media) == 'https://cdn.example/320x320.jpg'
+
+
+def test_pick_thumbnail_falls_back_to_the_largest_when_all_are_small(tmp_path: Path) -> None:
+    media = _candidates((150, 150), (240, 240))
+
+    assert InstaloaderService._pick_thumbnail(media) == 'https://cdn.example/240x240.jpg'
+
+
+def test_pick_thumbnail_uses_the_fallback_when_there_are_no_candidates(tmp_path: Path) -> None:
+    assert InstaloaderService._pick_thumbnail({}, fallback='https://cdn.example/original.jpg') == (
+        'https://cdn.example/original.jpg'
+    )
+    assert InstaloaderService._pick_thumbnail({'image_versions2': {'candidates': []}}) is None
+
+
+def test_pick_thumbnail_skips_malformed_candidates(tmp_path: Path) -> None:
+    media = {'image_versions2': {'candidates': [
+        'not-a-dict', {'width': 320}, {'url': 'https://cdn.example/no-width.jpg'},
+        {'width': 640, 'url': 'https://cdn.example/640.jpg'},
+    ]}}
+
+    # The entry with no width sorts as 0 and is only chosen if nothing
+    # reaches the target width; 640 does, so it wins.
+    assert InstaloaderService._pick_thumbnail(media) == 'https://cdn.example/640.jpg'
+
+
+def test_post_preview_prefers_a_small_rendition_over_the_original(tmp_path: Path) -> None:
+    post = _fake_post('abc', datetime(2026, 8, 20, tzinfo=timezone.utc))
+    post.url = 'https://cdn.example/full-size-original.jpg'
+    post._node = {'iphone_struct': dict(
+        product_type='feed', timeline_pinned_user_ids=[],
+        **_candidates((3024, 4032), (320, 427)),
+    )}
+
+    preview = InstaloaderService._post_to_preview(post, InstagramContentType.POST, 'someuser')
+
+    assert preview.thumbnail_url == 'https://cdn.example/320x427.jpg'
+
+
+def test_post_preview_falls_back_to_post_url_without_a_struct(tmp_path: Path) -> None:
+    post = _fake_post('abc', datetime(2026, 8, 20, tzinfo=timezone.utc))
+    post.url = 'https://cdn.example/only-option.jpg'
+
+    preview = InstaloaderService._post_to_preview(post, InstagramContentType.POST, 'someuser')
+
+    assert preview.thumbnail_url == 'https://cdn.example/only-option.jpg'
+
+
+def test_reel_preview_uses_a_small_rendition(tmp_path: Path) -> None:
+    media = _reel_media('ABC', _pk_for(datetime(2026, 8, 23, tzinfo=timezone.utc)), thumb=None)
+    media.update(_candidates((640, 1136), (320, 568)))
+
+    preview = InstaloaderService._reel_to_preview(media, 'someuser')
+
+    assert preview.thumbnail_url == 'https://cdn.example/320x568.jpg'
