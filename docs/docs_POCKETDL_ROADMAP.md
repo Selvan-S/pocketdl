@@ -450,21 +450,55 @@ Closed the UI gap Round 2 left open, no backend changes needed:
   actual "does a real signed-in preview return real items" check below is
   still open because it was never reachable, not because it was skipped.
 
+### Round 4 — fixed a real 5+ minute hang, found via the first real-credential attempt
+The first actual test with a real session cookie against a real profile
+(Reels selected, no date range set) hung for 5+ minutes -- Chrome DevTools
+showed the request "Stalled", and the polling requests piling up behind it
+made the whole tab sluggish to scroll. Root-caused to two compounding gaps:
+
+1. `_build_loader()` never overrode instaloader's own defaults --
+   `request_timeout=300s` *per HTTP call*, `max_connection_attempts=3` on
+   top -- and none of `list_profile_items`/`download`/`test_session`
+   wrapped their `asyncio.to_thread(...)` call in any outer timeout (the
+   gallery-dl round's equivalent code had an explicit
+   `asyncio.wait_for(..., timeout=120)`; this one didn't). Now:
+   `request_timeout=20s`, `max_connection_attempts=2`, and all three public
+   methods wrap their thread call in `asyncio.wait_for` (90s for
+   preview/session-check, 600s for an actual media download -- downloads
+   legitimately take longer). `list_profile_items` raises a new
+   `InstaloaderTimeoutError` (a `RuntimeError`, so the existing 502 mapping
+   in routes.py needed no change); `test_session` treats a timeout as "not
+   verified" rather than raising.
+2. The likely dominant cause for *this specific report*: with no `since`
+   bound, `_collect_posts` had nothing to stop pagination early --
+   `get_reels()`/`get_posts()` page through a profile's entire history for
+   an active account, each page its own request with instaloader's own
+   rate-limit courtesy delay between them (`sleep=True`). Added
+   `_MAX_ITEMS_WITHOUT_DATE_RANGE=50`, verified with an infinite-generator
+   test that the cap actually stops iteration rather than truncating a
+   finite list after the fact. An explicit date range still overrides it.
+
+Live-verified against real Instagram servers with a fake cookie
+afterward: the same class of call that used to hang now fails cleanly in
+7 seconds. UI hint text updated to mention the cap.
+
 ### What's left
-Only the one gate neither engine round nor this UI-wiring round could
-reach: a **real signed-in profile preview has never been seen to return
-real items**, because no real Instagram login credentials have been
-available during any of the three rounds. Everything code-shaped is done
--- this needs a person with an actual Instagram account to paste a real
-session cookie and try the profile browser once. When that happens and it
-works, this section can finally be marked fully done; if it fails, the
-failure mode itself is the next actionable bug report.
+Only the one gate no round could reach: a **real signed-in profile preview
+has never been seen to return real items**, because no real Instagram
+login credentials have been available during any of the four rounds --
+Round 4 above was the first attempt with a real cookie, and it hit an
+infrastructure bug (now fixed) before it could reach that check. Everything
+code-shaped is done -- this needs a person with an actual Instagram account
+to paste a real session cookie and try the profile browser once, now that
+it won't hang. When that happens and it works, this section can finally be
+marked fully done; if it fails, the failure mode itself is the next
+actionable bug report.
 
 ### Resuming this work
-On branch `feature/phase5-instagram-collections`, working tree has this
-round's UI commit on top of the 20 commits from before, not yet pushed to
-`main`. Nothing left to "resume" in the code-writing sense -- the only
-remaining step is the manual real-credential check described above.
+On branch `feature/phase5-instagram-collections`, 23 commits ahead of
+`main` as of this update, working tree clean, not yet pushed. Nothing left
+to "resume" in the code-writing sense -- the only remaining step is the
+manual real-credential check described above.
 
 ---
 
