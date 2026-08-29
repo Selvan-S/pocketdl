@@ -255,9 +255,14 @@ For small bugs, prefer a minimal patch with a regression test.
 ## Immediate priority
 Android/Termux deployment (M1-M6) and format/quality analysis (Phase 3) are
 both done. Immediate priority is now, per explicit request:
-1. Multi-platform extraction beyond Instagram (docs/docs_POCKETDL_ROADMAP.md
+1. **Round 10 in docs/docs_POCKETDL_ROADMAP.md — long-list management.**
+   Playlists and the downloads list both grow without bound, cannot be
+   filtered by download state, and playlists do not refresh live because
+   collections are absent from the SSE snapshot. Planned in detail there;
+   no code written yet.
+2. Multi-platform extraction beyond Instagram (docs/docs_POCKETDL_ROADMAP.md
    Phase 5) and the product-polish enhancement plan in the same doc.
-2. Keep that sequenced behind the two narrow Phase 2 remnants above
+3. Keep those sequenced behind the two narrow Phase 2 remnants above
    (multi-CDN capture dedup, HLS size-estimate edge case) if they resurface
    as real user-reported bugs — they are not blocking, just unfinished.
 Do not treat this section as license to restart the original v0.3

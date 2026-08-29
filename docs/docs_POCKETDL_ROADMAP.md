@@ -980,6 +980,60 @@ there is no browser automation in this environment. The build and typecheck
 are clean and the logic was traced by reading, but nobody has watched them in
 a real page.
 
+### Round 10 — long-list management (planned, not started)
+Reported after using Round 9. Three related complaints, all the same shape:
+**lists only ever grow, and they do not update themselves.** Treat them as
+one piece of work, not three, because the fix is a shared pattern.
+
+1. **A playlist is one unbroken scroll.** Completed items stay in it
+   alongside pending ones, so it grows every time more is added and there is
+   no way to see "what is left to download" separately from "what is already
+   on disk". Wanted: tabs (at minimum pending / downloaded / all) plus
+   pagination within each.
+2. **A playlist does not update live.** Downloading an item does not move it
+   to "Downloaded" or update its badge until the page is reloaded. Round 8
+   put downloads, captures, status and settings on the SSE stream but **not
+   collections**, so `PlaylistCard` only refreshes when an action in the
+   panel happens to call `onCollectionsChanged`.
+3. **The downloads list has the same problem** -- it grows without bound and
+   has no filtering or paging of its own.
+
+#### Design notes for whoever picks this up
+- **Live playlists (item 2) is the enabling change; do it first.** Add
+  collections (and, for an expanded playlist, its items) to the
+  `_event_snapshot` payload in `app/api/routes.py`. The notifier already
+  fires on every successful mutation and on download progress, so nothing
+  new has to be instrumented -- but see the level-triggered contract in
+  `app/application/events.py` before touching the stream loop, and note that
+  `tests/test_events_stream.py` drives the route's `body_iterator` directly
+  because httpx's `ASGITransport` cannot consume an endless stream.
+  - Watch the payload size: a playlist with 128 items in every snapshot is
+    not free. Prefer sending collection *summaries* (id, name, counts by
+    state) always, and full items only for a playlist the client says is
+    open -- or keep items on their existing endpoint and let the summary
+    counts drive a re-fetch, which is what `PlaylistCard` already does via
+    `loadedForCount`.
+- **Counts by state belong on the server.** `CollectionResponse.item_count`
+  should grow siblings (e.g. `downloaded_count`), so a tab can show
+  "Pending 78 / Downloaded 50" without shipping every row to compute it.
+  `collection_items.downloaded_job_id` already records the state.
+- **Paginate `GET /api/collections/{id}/items`** with limit/offset and a
+  `state` filter. This one is a plain SQLite query -- unlike the Instagram
+  feed cursor in Round 9, there is no reverse-chronological remote feed to
+  work around, so ordinary offset paging is fine here and the date-cursor
+  reasoning does *not* apply.
+- **Downloads (item 3) wants the same treatment**, but its list is on the
+  SSE snapshot, so paging it server-side interacts with the stream: either
+  send only recent/active jobs in the snapshot and page history separately,
+  or keep sending all and filter client-side. Sending everything forever is
+  what makes the payload grow, so prefer the former -- but note the client
+  currently diffs the whole array to decide whether to re-render, and that
+  comparison has to stay meaningful.
+- A "clear completed" / "remove downloaded from playlist" action is the
+  cheap complement to all of this and probably worth doing at the same time.
+
+Nothing here is started. No code has been written for Round 10.
+
 ### What's left
 - **Stories and Highlights have still never been live-verified**, and
   `_collect_stories`/`_collect_highlights` still call
@@ -997,16 +1051,29 @@ a real page.
   considered and *not* built: it would not lift the browser's
   per-host connection cap, and picking a smaller rendition removed 94% of
   the bytes without adding an SSRF-shaped endpoint.
-- **Playlist UX**: no way to filter or group a playlist by content type or
-  download state, so a playlist mixing already-downloaded posts with
-  newly-added highlights is still hard to act on. Playlists are also absent
-  from the SSE snapshot, so their counts only refresh after an action rather
-  than live.
+- **Long-list management (Round 10 above) is the next piece of work** and
+  the user's current top priority: playlists and the downloads list both
+  grow without bound, cannot be filtered by download state, and playlists do
+  not update live because collections are absent from the SSE snapshot.
 - Merging the pilot to `main`.
 
 ### Resuming this work
-On branch `feature/phase5-instagram-collections`, not yet merged to `main`.
-The session cookie in `.secrets/` makes every live check above repeatable.
+On branch `feature/phase5-instagram-collections`, not yet merged to `main`,
+working tree clean apart from a local `allowedHosts: true` tweak in
+`apps/web/vite.config.ts` that is deliberately left uncommitted.
+
+The session cookie in `.secrets/instagram_session.json` (gitignored) makes
+every live check above repeatable -- `penvi_bomnyo` is the profile the last
+three rounds were verified against (25 grid posts, 128 reels, disjoint).
+
+Two standing constraints worth re-reading before changing anything here:
+`tests/test_polling_does_not_hit_instagram.py` (nothing the client polls may
+reach Instagram) and the level-triggered notifier contract in
+`app/application/events.py`.
+
+There is no browser automation in this environment, so any UI change is
+verifiable only by build + typecheck + reading; say so rather than implying
+it was seen working.
 
 ---
 
