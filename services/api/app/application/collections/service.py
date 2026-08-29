@@ -46,6 +46,14 @@ class CollectionService:
     async def list_items(self, collection_id: str) -> list[CollectionItem]:
         return await self.repository.list_items(collection_id)
 
+    async def list_items_page(
+        self, collection_id: str, *, state: str = 'all', limit: int = 50, offset: int = 0,
+    ) -> list[CollectionItem]:
+        return await self.repository.list_items_page(collection_id, state=state, limit=limit, offset=offset)
+
+    async def collection_counts(self) -> dict[str, tuple[int, int]]:
+        return await self.repository.collection_counts()
+
     async def add_item(self, collection_id: str, preview: ProfileItemPreview) -> CollectionItem:
         collection = await self.repository.get_collection(collection_id)
         if collection is None:

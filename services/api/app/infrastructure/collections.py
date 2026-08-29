@@ -198,6 +198,49 @@ class SqliteCollectionRepository(CollectionRepository):
             )
             return [self._row_to_item(row) for row in await cursor.fetchall()]
 
+    # The download-state filter for a paged item listing. "pending" and
+    # "downloaded" are the two tabs a long playlist is split into; keyed on
+    # downloaded_job_id, which mark_item_downloaded sets.
+    _STATE_CLAUSES = {
+        'all': '',
+        'pending': ' AND downloaded_job_id IS NULL',
+        'downloaded': ' AND downloaded_job_id IS NOT NULL',
+    }
+
+    async def list_items_page(
+        self, collection_id: str, *, state: str = 'all', limit: int = 50, offset: int = 0,
+    ) -> list[CollectionItem]:
+        """A single page of one download-state, for a playlist too long to
+        render in one scroll. Ordinary offset paging: unlike Round 9's
+        remote Instagram feed there is no reverse-chronological cursor to
+        work around, this is a plain local query."""
+        clause = self._STATE_CLAUSES.get(state, '')
+        async with aiosqlite.connect(self.database_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                'SELECT * FROM collection_items WHERE collection_id = ?'
+                f'{clause} ORDER BY added_at LIMIT ? OFFSET ?',
+                (collection_id, max(0, limit), max(0, offset)),
+            )
+            return [self._row_to_item(row) for row in await cursor.fetchall()]
+
+    async def collection_counts(self) -> dict[str, tuple[int, int]]:
+        """(total, downloaded) item counts per collection, in one query.
+
+        Built on every SSE snapshot -- which rebuilds on every download
+        progress tick -- so this must not fan out into a per-collection
+        query the way list_collections + list_items once did. A collection
+        with no items simply does not appear; callers default it to (0, 0).
+        """
+        async with aiosqlite.connect(self.database_path) as db:
+            cursor = await db.execute(
+                '''SELECT collection_id,
+                          COUNT(*) AS total,
+                          SUM(CASE WHEN downloaded_job_id IS NOT NULL THEN 1 ELSE 0 END) AS downloaded
+                   FROM collection_items GROUP BY collection_id''',
+            )
+            return {row[0]: (row[1], row[2] or 0) for row in await cursor.fetchall()}
+
     async def remove_item(self, collection_id: str, item_id: str) -> None:
         async with aiosqlite.connect(self.database_path) as db:
             await db.execute('DELETE FROM collection_items WHERE id = ? AND collection_id = ?', (item_id, collection_id))

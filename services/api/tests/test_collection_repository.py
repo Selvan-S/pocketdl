@@ -302,6 +302,67 @@ async def test_update_item_metadata_fills_gaps(tmp_path) -> None:
     assert stored.posted_at == exact
 
 
+# --- Round 10: state-filtered paging and by-state counts ---
+
+
+@pytest.mark.asyncio
+async def test_collection_counts_reports_total_and_downloaded(tmp_path) -> None:
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection('c1'))
+    await repository.add_collection(build_collection('c2', name='Other'))
+    await repository.add_item(build_item('i1', 'c1', external_id='a'))
+    await repository.add_item(build_item('i2', 'c1', external_id='b'))
+    await repository.add_item(build_item('i3', 'c1', external_id='c'))
+    await repository.add_item(build_item('i4', 'c2', external_id='d'))
+    await repository.mark_item_downloaded('i1', 'job-1')
+    await repository.mark_item_downloaded('i2', 'job-2')
+
+    counts = await repository.collection_counts()
+
+    assert counts['c1'] == (3, 2)
+    assert counts['c2'] == (1, 0)
+    # A collection with no items simply does not appear.
+    await repository.add_collection(build_collection('c3', name='Empty'))
+    assert 'c3' not in await repository.collection_counts()
+
+
+@pytest.mark.asyncio
+async def test_list_items_page_filters_by_state(tmp_path) -> None:
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+    for suffix in ('a', 'b', 'c', 'd'):
+        await repository.add_item(build_item(f'i-{suffix}', 'c1', external_id=suffix))
+    await repository.mark_item_downloaded('i-a', 'job-1')
+    await repository.mark_item_downloaded('i-c', 'job-2')
+
+    pending = await repository.list_items_page('c1', state='pending')
+    downloaded = await repository.list_items_page('c1', state='downloaded')
+    everything = await repository.list_items_page('c1', state='all')
+
+    assert {item.id for item in pending} == {'i-b', 'i-d'}
+    assert {item.id for item in downloaded} == {'i-a', 'i-c'}
+    assert len(everything) == 4
+
+
+@pytest.mark.asyncio
+async def test_list_items_page_paginates_in_added_order(tmp_path) -> None:
+    repository = SqliteCollectionRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await repository.add_collection(build_collection())
+    for index in range(5):
+        item = build_item(f'i{index}', 'c1', external_id=str(index))
+        item.added_at = datetime(2026, 8, 20, 12, index, tzinfo=timezone.utc)
+        await repository.add_item(item)
+
+    first = await repository.list_items_page('c1', limit=2, offset=0)
+    second = await repository.list_items_page('c1', limit=2, offset=2)
+
+    assert [item.id for item in first] == ['i0', 'i1']
+    assert [item.id for item in second] == ['i2', 'i3']
+
+
 @pytest.mark.asyncio
 async def test_update_item_metadata_never_blanks_an_existing_caption(tmp_path) -> None:
     # A reel with no caption must not wipe one that discovery did supply.

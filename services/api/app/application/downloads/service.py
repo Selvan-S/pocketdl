@@ -151,6 +151,12 @@ class QueueService:
                     finished = await self.repository.get(job_id)
                     if finished is not None and finished.status is DownloadStatus.COMPLETED:
                         await self.collection_repository.mark_item_downloaded(collection_item_id, job_id)
+                        # The COMPLETED progress tick already fired on_change,
+                        # but that was *before* this row moved to downloaded --
+                        # so a playlist's downloaded_count would otherwise lag
+                        # to the next heartbeat. Nudge the stream again now.
+                        if self._on_change is not None:
+                            self._on_change()
         except asyncio.CancelledError:
             raise
         except Exception as exc:

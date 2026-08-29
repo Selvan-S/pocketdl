@@ -46,8 +46,12 @@ phase-by-phase status — the summary below is kept short and can lag it.
 
 ## Live updates
 The PWA does not poll. `GET /api/events` is a server-sent event stream
-carrying one snapshot of downloads/status/captures/settings, and it only
-emits when that snapshot actually changes. Waking is via
+carrying one snapshot of downloads/status/captures/settings/collections, and
+it only emits when that snapshot actually changes. Collections ride the
+stream as *summaries only* (id, name, item_count, downloaded_count) -- never
+their items -- so a 128-item playlist costs one row, not 128; an open
+playlist re-fetches its own page (paged, state-filtered) when those counts
+move (Round 10). Waking is via
 `ChangeNotifier` (`app/application/events.py`), fired by an HTTP middleware
 after any successful non-GET request and by `QueueService` on download
 progress, with a 15s heartbeat as backstop.
@@ -255,11 +259,12 @@ For small bugs, prefer a minimal patch with a regression test.
 ## Immediate priority
 Android/Termux deployment (M1-M6) and format/quality analysis (Phase 3) are
 both done. Immediate priority is now, per explicit request:
-1. **Round 10 in docs/docs_POCKETDL_ROADMAP.md — long-list management.**
-   Playlists and the downloads list both grow without bound, cannot be
-   filtered by download state, and playlists do not refresh live because
-   collections are absent from the SSE snapshot. Planned in detail there;
-   no code written yet.
+1. **Round 10 (long-list management) is done** — collections are on the SSE
+   snapshot as summaries, playlists have Pending/Downloaded/All tabs + paging
+   and update live, and the downloads list has the same tabs + paging.
+   Backend is test-covered; the UI is verified only by build + typecheck
+   (no browser automation here). Follow-up left open: the downloads SSE
+   payload still carries every job (server-side history paging deferred).
 2. Multi-platform extraction beyond Instagram (docs/docs_POCKETDL_ROADMAP.md
    Phase 5) and the product-polish enhancement plan in the same doc.
 3. Keep those sequenced behind the two narrow Phase 2 remnants above

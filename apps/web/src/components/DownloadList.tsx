@@ -1,4 +1,28 @@
-import type { DownloadItem } from '../types/api';
+import { useEffect, useMemo, useState } from 'react';
+import type { DownloadItem, DownloadStatus } from '../types/api';
+
+// The downloads list grows without bound as history accumulates. Tabs split
+// it by state and pagination bounds what is rendered, the same shape as the
+// playlist fix -- see Round 10 in docs/docs_POCKETDL_ROADMAP.md. This is
+// client-side: the full list already arrives on the SSE snapshot, so no extra
+// request is made; note the snapshot payload itself still carries every job.
+const DOWNLOADS_PAGE_SIZE = 20;
+
+const ACTIVE_STATUSES: DownloadStatus[] = ['queued', 'running'];
+
+type DownloadTab = 'active' | 'completed' | 'all';
+
+const DOWNLOAD_TABS: Array<{ value: DownloadTab; label: string }> = [
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'all', label: 'All' },
+];
+
+function inTab(item: DownloadItem, tab: DownloadTab): boolean {
+  if (tab === 'all') return true;
+  const active = ACTIVE_STATUSES.includes(item.status);
+  return tab === 'active' ? active : !active;
+}
 
 function formatBytes(value: number | null): string {
   if (value == null) return '—';
@@ -21,11 +45,43 @@ export function DownloadList({ items, onCancel, onDelete }: {
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const [tab, setTab] = useState<DownloadTab>('all');
+  const [page, setPage] = useState(0);
+
+  const counts = useMemo(() => ({
+    active: items.filter((item) => inTab(item, 'active')).length,
+    completed: items.filter((item) => inTab(item, 'completed')).length,
+    all: items.length,
+  }), [items]);
+
+  const filtered = useMemo(() => items.filter((item) => inTab(item, tab)), [items, tab]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / DOWNLOADS_PAGE_SIZE));
+
+  // The list updates live off the SSE stream, so a page can empty out (jobs
+  // finishing, being removed) under the current page -- clamp back into range.
+  useEffect(() => {
+    if (page > pageCount - 1) setPage(pageCount - 1);
+  }, [page, pageCount]);
+
+  const visible = filtered.slice(page * DOWNLOADS_PAGE_SIZE, page * DOWNLOADS_PAGE_SIZE + DOWNLOADS_PAGE_SIZE);
+
   if (items.length === 0) return <div className="empty">No downloads yet.</div>;
 
   return (
     <div className="downloads">
-      {items.map((item) => (
+      <div className="playlist-tabs">
+        {DOWNLOAD_TABS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            className={`playlist-tab ${tab === value ? 'active' : ''}`}
+            onClick={() => { setTab(value); setPage(0); }}
+          >
+            {label} {counts[value]}
+          </button>
+        ))}
+      </div>
+      {visible.map((item) => (
         <article key={item.id} className="download-card">
           <div className="download-header">
             <div className="download-title-group">
@@ -60,6 +116,19 @@ export function DownloadList({ items, onCancel, onDelete }: {
           </div>
         </article>
       ))}
+      {filtered.length === 0 ? (
+        <div className="empty">No {tab === 'all' ? '' : `${tab} `}downloads.</div>
+      ) : pageCount > 1 ? (
+        <div className="playlist-pager">
+          <button type="button" className="secondary compact" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
+            Previous
+          </button>
+          <span>Page {page + 1} of {pageCount}</span>
+          <button type="button" className="secondary compact" disabled={page >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>
+            Next
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

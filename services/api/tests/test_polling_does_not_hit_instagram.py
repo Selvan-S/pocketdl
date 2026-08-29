@@ -23,6 +23,7 @@ POLLED_PATHS = [
     '/api/system/status',
     '/api/captures',
     '/api/settings',
+    '/api/collections',
     '/api/instagram/session',
 ]
 

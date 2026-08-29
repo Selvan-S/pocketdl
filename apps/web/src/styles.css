@@ -433,6 +433,13 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 .playlist-item-meta { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .playlist-item-meta > span:first-child { font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: #9fc6ff; }
 
+/* State tabs + pager, shared by playlists and the downloads list (Round 10). */
+.playlist-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.playlist-tab { min-height: 32px; padding: 0 12px; font-size: 12px; font-weight: 700; background: #0c1322; color: #8a99b5; border: 1px solid #202b44; border-radius: 999px; cursor: pointer; }
+.playlist-tab.active { background: #17253a; color: #d6e4ff; border-color: #33507e; }
+.playlist-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 4px; color: #7f8da8; font-size: 12px; }
+.downloads .playlist-tabs { margin-bottom: 12px; }
+
 @media (max-width: 680px) {
   .instagram-items-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
   .instagram-add-row select, .instagram-add-row input, .instagram-add-row button { width: 100%; }

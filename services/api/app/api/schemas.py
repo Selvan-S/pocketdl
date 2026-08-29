@@ -348,6 +348,10 @@ class CollectionResponse(BaseModel):
     platform: str
     name: str
     item_count: int
+    # How many of item_count have completed a download. Lets a client show
+    # "Pending 78 / Downloaded 50" and drive a live badge without shipping
+    # every row to compute it.
+    downloaded_count: int = 0
     created_at: datetime
     updated_at: datetime
 

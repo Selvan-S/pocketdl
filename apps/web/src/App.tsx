@@ -5,7 +5,7 @@ import { DownloadList } from './components/DownloadList';
 import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
-import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, DownloadCreateRequest, DownloadItem, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
+import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
 import './styles.css';
 
 /** Structural equality by serialisation. The payloads here are small,
@@ -19,6 +19,12 @@ function sameJson(a: unknown, b: unknown): boolean {
 export default function App() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [captures, setCaptures] = useState<CaptureItem[]>([]);
+  // Collection summaries (counts, not items) live here rather than inside the
+  // Instagram panel so the SSE snapshot can keep them live -- an item
+  // finishing its download moves the playlist's Downloaded badge without a
+  // reload. The panel re-fetches an open playlist's items when these counts
+  // change; see PlaylistCard.
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   // Tracks whether the *current* poll actually reached the backend, separate
   // from `status` (which deliberately keeps its last-known-good value across
@@ -44,11 +50,12 @@ export default function App() {
     // Each call is independent: one endpoint failing (e.g. /api/system/status
     // shelling out to check yt-dlp/ffmpeg) must not stop the others from
     // updating or leave the connection pill stuck on "Connecting…" forever.
-    const [items, system, captured, nextSettings] = await Promise.allSettled([
+    const [items, system, captured, nextSettings, nextCollections] = await Promise.allSettled([
       api.listDownloads(),
       api.status(),
       api.listCaptures(),
       api.settings(),
+      api.listCollections(),
     ]);
     if (seq !== refreshSeq.current) return;
     if (items.status === 'fulfilled') setDownloads(items.value);
@@ -60,7 +67,8 @@ export default function App() {
     }
     if (captured.status === 'fulfilled') setCaptures(captured.value);
     if (nextSettings.status === 'fulfilled') setSettings(nextSettings.value);
-    const failed = [items, system, captured, nextSettings].find((r) => r.status === 'rejected');
+    if (nextCollections.status === 'fulfilled') setCollections(nextCollections.value);
+    const failed = [items, system, captured, nextSettings, nextCollections].find((r) => r.status === 'rejected');
     if (failed) {
       const reason = (failed as PromiseRejectedResult).reason;
       setMessage(reason instanceof Error ? reason.message : 'Failed to load some data.');
@@ -78,6 +86,7 @@ export default function App() {
     if (snapshot.captures) setCaptures((current) => (sameJson(current, snapshot.captures) ? current : snapshot.captures!));
     if (snapshot.status) setStatus((current) => (sameJson(current, snapshot.status) ? current : snapshot.status));
     if (snapshot.settings) setSettings((current) => (sameJson(current, snapshot.settings) ? current : snapshot.settings));
+    if (snapshot.collections) setCollections((current) => (sameJson(current, snapshot.collections) ? current : snapshot.collections!));
   }, []);
 
   useEffect(() => {
@@ -292,7 +301,12 @@ export default function App() {
           </div>
           <span className="section-chevron">−</span>
         </summary>
-        <InstagramPanel onMessage={setMessage} onDownloadQueued={refresh} />
+        <InstagramPanel
+          collections={collections}
+          onCollectionsChanged={refresh}
+          onMessage={setMessage}
+          onDownloadQueued={refresh}
+        />
       </details>
 
       <details className="section-collapsible" open>

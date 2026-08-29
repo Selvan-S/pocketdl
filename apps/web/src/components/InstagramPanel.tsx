@@ -3,13 +3,31 @@ import { api } from '../api/client';
 import type {
   Collection,
   CollectionItem,
+  CollectionItemState,
   InstagramContentType,
   InstagramProfilePreviewRequest,
   InstagramSessionStatus,
   ProfileItemPreview,
 } from '../types/api';
 
+// How many playlist rows to render per page. A playlist can hold hundreds of
+// items; rendering them all at once is exactly the "one unbroken scroll"
+// Round 10 set out to fix.
+const PLAYLIST_PAGE_SIZE = 24;
+
+const PLAYLIST_TABS: Array<{ value: CollectionItemState; label: string }> = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'downloaded', label: 'Downloaded' },
+  { value: 'all', label: 'All' },
+];
+
 interface Props {
+  // Summaries (counts, not items) owned by App and kept live off the SSE
+  // snapshot, so a playlist's badge moves when a download finishes without a
+  // reload. onCollectionsChanged re-seeds them immediately after a local
+  // mutation rather than waiting for the next pushed frame.
+  collections: Collection[];
+  onCollectionsChanged: () => Promise<void>;
   onMessage: (message: string) => void;
   onDownloadQueued: () => Promise<void>;
 }
@@ -46,31 +64,20 @@ function formatPostedAt(postedAt: string | null): string | null {
   return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-export function InstagramPanel({ onMessage, onDownloadQueued }: Props) {
+export function InstagramPanel({ collections, onCollectionsChanged, onMessage, onDownloadQueued }: Props) {
   const [session, setSession] = useState<InstagramSessionStatus | null>(null);
-  const [collections, setCollections] = useState<Collection[]>([]);
-
-  const refreshCollections = useCallback(async () => {
-    try {
-      setCollections(await api.listCollections());
-    } catch {
-      // The Instagram panel is best-effort supplementary UI; a failed
-      // refresh here should not disturb the rest of the app.
-    }
-  }, []);
 
   useEffect(() => {
     api.instagramSessionStatus().then(setSession).catch(() => undefined);
-    void refreshCollections();
-  }, [refreshCollections]);
+  }, []);
 
   return (
     <div className="instagram-panel">
       <SessionControl session={session} onChange={setSession} onMessage={onMessage} />
-      <ProfileBrowser collections={collections} onCollectionsChanged={refreshCollections} onMessage={onMessage} />
+      <ProfileBrowser collections={collections} onCollectionsChanged={onCollectionsChanged} onMessage={onMessage} />
       <PlaylistsView
         collections={collections}
-        onCollectionsChanged={refreshCollections}
+        onCollectionsChanged={onCollectionsChanged}
         onMessage={onMessage}
         onDownloadQueued={onDownloadQueued}
       />
@@ -561,31 +568,64 @@ function PlaylistCard({
   onMessage: (message: string) => void;
   onDownloadQueued: () => Promise<void>;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [tab, setTab] = useState<CollectionItemState>('pending');
+  const [page, setPage] = useState(0);
   const [items, setItems] = useState<CollectionItem[] | null>(null);
+  const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The count this card's item list was last fetched for. Keyed on the count
-  // rather than compared against items.length so a single change triggers at
-  // most one re-fetch: if the two ever disagreed persistently, comparing
-  // lengths would re-fetch on every render forever.
-  const loadedForCount = useRef<number | null>(null);
+  const total = collection.item_count;
+  const downloadedCount = collection.downloaded_count;
+  const pendingCount = Math.max(0, total - downloadedCount);
+  const tabCount = tab === 'all' ? total : tab === 'downloaded' ? downloadedCount : pendingCount;
+  const pageCount = Math.max(1, Math.ceil(tabCount / PLAYLIST_PAGE_SIZE));
 
-  const loadItems = useCallback(async () => {
-    loadedForCount.current = collection.item_count;
-    setItems(await api.listCollectionItems(collection.id));
-  }, [collection.id, collection.item_count]);
-
-  // The list used to be fetched once, on first expand, and cached forever --
-  // so adding items to an already-open playlist updated the header count
-  // while the list underneath still showed the old contents, leaving no way
-  // to see what "Download all" would act on.
+  // Items an item can move between tabs (a download completing shifts it from
+  // pending to downloaded), so a page that was valid can empty out. Clamp
+  // back into range when the live counts shrink under the current page.
   useEffect(() => {
-    if (items !== null && loadedForCount.current !== collection.item_count) {
-      void loadItems();
+    if (page > pageCount - 1) setPage(pageCount - 1);
+  }, [page, pageCount]);
+
+  // Everything the visible page depends on. It includes the live counts, so a
+  // download finishing anywhere -- which moves total/downloaded on the SSE
+  // snapshot -- re-fetches this page rather than leaving a stale badge. Keyed
+  // on the signature rather than compared against items so it re-fetches at
+  // most once per change.
+  const signature = `${tab}:${page}:${total}:${downloadedCount}`;
+  const loadedSignature = useRef<string | null>(null);
+
+  const loadPage = useCallback(async () => {
+    loadedSignature.current = signature;
+    setLoading(true);
+    setError(null);
+    try {
+      const fetched = await api.listCollectionItems(collection.id, {
+        state: tab,
+        limit: PLAYLIST_PAGE_SIZE,
+        offset: page * PLAYLIST_PAGE_SIZE,
+      });
+      setItems(fetched);
+    } catch (caughtError) {
+      const text = caughtError instanceof Error ? caughtError.message : 'Unable to load playlist items.';
+      setError(text);
+    } finally {
+      setLoading(false);
     }
-  }, [collection.item_count, items, loadItems]);
+  }, [collection.id, tab, page, signature]);
+
+  useEffect(() => {
+    if (expanded && loadedSignature.current !== signature) void loadPage();
+  }, [expanded, signature, loadPage]);
+
+  function selectTab(next: CollectionItemState) {
+    setTab(next);
+    setPage(0);
+    setSelected(new Set());
+  }
 
   function toggleSelected(itemId: string) {
     setSelected((current) => {
@@ -603,8 +643,9 @@ function PlaylistCard({
       const jobs = await api.downloadCollection(collection.id, itemIds ? { item_ids: itemIds } : {});
       onMessage(jobs.length > 0 ? `Queued ${jobs.length} download(s).` : 'Nothing new to download in this playlist.');
       await onDownloadQueued();
-      setItems(await api.listCollectionItems(collection.id));
       setSelected(new Set());
+      // Completed state (and the Downloaded tab) fills in live as jobs finish
+      // and the counts move; nothing to reload here beyond the queue itself.
     } catch (caughtError) {
       // Also shown inline (not just via onMessage) since the shared message
       // banner lives at the top of the page, far from this card.
@@ -630,14 +671,14 @@ function PlaylistCard({
   return (
     <details
       className="playlist-card"
-      onToggle={(event) => {
-        if ((event.target as HTMLDetailsElement).open && items === null) void loadItems();
-      }}
+      onToggle={(event) => setExpanded((event.target as HTMLDetailsElement).open)}
     >
       <summary>
         <div>
           <h3>{collection.name}</h3>
-          <span>{collection.item_count} item(s)</span>
+          <span>
+            {total} item(s) · {pendingCount} pending · {downloadedCount} downloaded
+          </span>
         </div>
       </summary>
       <div className="playlist-expanded">
@@ -646,39 +687,69 @@ function PlaylistCard({
             Download all
           </button>
           <button className="secondary" disabled={busy || selected.size === 0} onClick={() => void downloadItems(Array.from(selected))}>
-            Download selected
+            Download selected{selected.size ? ` (${selected.size})` : ''}
           </button>
           <button className="secondary" disabled={busy} onClick={() => void deletePlaylist()}>
             Delete playlist
           </button>
         </div>
+
+        <div className="playlist-tabs">
+          {PLAYLIST_TABS.map(({ value, label }) => {
+            const count = value === 'all' ? total : value === 'downloaded' ? downloadedCount : pendingCount;
+            return (
+              <button
+                key={value}
+                type="button"
+                className={`playlist-tab ${tab === value ? 'active' : ''}`}
+                onClick={() => selectTab(value)}
+              >
+                {label} {count}
+              </button>
+            );
+          })}
+        </div>
+
         {error && <div className="error">{error}</div>}
-        {items === null ? (
+        {items === null || loading ? (
           <div className="hint">Loading…</div>
         ) : items.length === 0 ? (
           <div className="empty-state">
-            <strong>No items in this playlist.</strong>
+            <strong>{tab === 'all' ? 'No items in this playlist.' : `No ${tab} items.`}</strong>
           </div>
         ) : (
-          <div className="playlist-items">
-            {items.map((item) => (
-              <div key={item.id} className="playlist-item">
-                <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} />
-                {item.thumbnail_url ? <img src={item.thumbnail_url} alt="" loading="lazy" /> : <div className="instagram-item-placeholder" />}
-                <div className="playlist-item-meta">
-                  <span>
-                    {item.content_type}
-                    {formatPostedAt(item.posted_at) && ` · ${formatPostedAt(item.posted_at)}`}
-                  </span>
-                  {item.caption && <span className="filename">{item.caption}</span>}
-                  {item.downloaded_job_id && <span className="status-badge used">Downloaded</span>}
+          <>
+            <div className="playlist-items">
+              {items.map((item) => (
+                <div key={item.id} className="playlist-item">
+                  <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} />
+                  {item.thumbnail_url ? <img src={item.thumbnail_url} alt="" loading="lazy" /> : <div className="instagram-item-placeholder" />}
+                  <div className="playlist-item-meta">
+                    <span>
+                      {item.content_type}
+                      {formatPostedAt(item.posted_at) && ` · ${formatPostedAt(item.posted_at)}`}
+                    </span>
+                    {item.caption && <span className="filename">{item.caption}</span>}
+                    {item.downloaded_job_id && <span className="status-badge used">Downloaded</span>}
+                  </div>
+                  <button type="button" className="link-button" onClick={() => void removeItem(item.id)}>
+                    Remove
+                  </button>
                 </div>
-                <button type="button" className="link-button" onClick={() => void removeItem(item.id)}>
-                  Remove
+              ))}
+            </div>
+            {pageCount > 1 && (
+              <div className="playlist-pager">
+                <button type="button" className="secondary compact" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
+                  Previous
+                </button>
+                <span>Page {page + 1} of {pageCount}</span>
+                <button type="button" className="secondary compact" disabled={page >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>
+                  Next
                 </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
     </details>

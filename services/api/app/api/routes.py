@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from .schemas import (
@@ -143,12 +145,13 @@ def capture_response(capture, variants: list[CaptureVariant] | None = None) -> C
     )
 
 
-def collection_response(collection: Collection, item_count: int) -> CollectionResponse:
+def collection_response(collection: Collection, item_count: int, downloaded_count: int = 0) -> CollectionResponse:
     return CollectionResponse(
         id=collection.id,
         platform=collection.platform.value,
         name=collection.name,
         item_count=item_count,
+        downloaded_count=downloaded_count,
         created_at=collection.created_at,
         updated_at=collection.updated_at,
     )
@@ -360,22 +363,28 @@ async def _event_snapshot(request: Request) -> dict:
     Deliberately calls the same handlers the individual endpoints do rather
     than re-querying, so the two can never disagree.
     """
-    downloads, system, captures, settings_payload = await asyncio.gather(
+    downloads, system, captures, settings_payload, collections = await asyncio.gather(
         list_downloads(request),
         system_status(request),
         list_captures(request),
         get_settings_route(request),
+        list_collections(request),
         return_exceptions=True,
     )
 
     def ok(value):
         return None if isinstance(value, BaseException) else value
 
+    # Collections carry *summaries only* (id, name, counts) -- never their
+    # items. A 128-item playlist in every snapshot, rebuilt on each progress
+    # tick, is exactly the cost this avoids; the counts are enough to drive a
+    # live badge and let an open playlist decide when to re-fetch its page.
     return {
         'downloads': [item.model_dump(mode='json') for item in (ok(downloads) or [])],
         'status': (payload.model_dump(mode='json') if (payload := ok(system)) else None),
         'captures': [item.model_dump(mode='json') for item in (ok(captures) or [])],
         'settings': (payload.model_dump(mode='json') if (payload := ok(settings_payload)) else None),
+        'collections': [item.model_dump(mode='json') for item in (ok(collections) or [])],
     }
 
 
@@ -641,10 +650,14 @@ async def clear_instagram_session(request: Request) -> dict[str, bool]:
 async def list_collections(request: Request) -> list[CollectionResponse]:
     service: CollectionService = request.app.state.collection_service
     collections = await service.list_collections()
+    # One GROUP BY for every collection's (total, downloaded) counts, rather
+    # than a list_items query per collection -- this route is also built into
+    # every SSE snapshot, which rebuilds on each download progress tick.
+    counts = await service.collection_counts()
     responses = []
     for collection in collections:
-        items = await service.list_items(collection.id)
-        responses.append(collection_response(collection, len(items)))
+        total, downloaded = counts.get(collection.id, (0, 0))
+        responses.append(collection_response(collection, total, downloaded))
     return responses
 
 
@@ -665,7 +678,8 @@ async def get_collection(collection_id: str, request: Request) -> CollectionResp
     if collection is None:
         raise HTTPException(status_code=404, detail='Collection not found')
     items = await service.list_items(collection_id)
-    return collection_response(collection, len(items))
+    downloaded = sum(1 for item in items if item.downloaded_job_id is not None)
+    return collection_response(collection, len(items), downloaded)
 
 
 @router.put('/collections/{collection_id}', response_model=CollectionResponse)
@@ -676,7 +690,8 @@ async def rename_collection(collection_id: str, payload: CollectionRenameRequest
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     items = await service.list_items(collection_id)
-    return collection_response(collection, len(items))
+    downloaded = sum(1 for item in items if item.downloaded_job_id is not None)
+    return collection_response(collection, len(items), downloaded)
 
 
 @router.delete('/collections/{collection_id}')
@@ -687,12 +702,25 @@ async def delete_collection(collection_id: str, request: Request) -> dict[str, b
 
 
 @router.get('/collections/{collection_id}/items', response_model=list[CollectionItemResponse])
-async def list_collection_items(collection_id: str, request: Request) -> list[CollectionItemResponse]:
+async def list_collection_items(
+    collection_id: str,
+    request: Request,
+    state: Literal['all', 'pending', 'downloaded'] = 'all',
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[CollectionItemResponse]:
+    """One page of a playlist, filtered by download state.
+
+    A long playlist is split into pending / downloaded / all tabs, each
+    paged, so it is no longer one unbounded scroll. The by-state totals a
+    client needs to render those tabs live come from the collection summary
+    (item_count / downloaded_count), so this returns just the rows.
+    """
     service: CollectionService = request.app.state.collection_service
     collection = await service.get_collection(collection_id)
     if collection is None:
         raise HTTPException(status_code=404, detail='Collection not found')
-    items = await service.list_items(collection_id)
+    items = await service.list_items_page(collection_id, state=state, limit=limit, offset=offset)
     return [collection_item_response(item) for item in items]
 
 

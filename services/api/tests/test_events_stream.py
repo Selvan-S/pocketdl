@@ -73,6 +73,26 @@ async def test_stream_sends_the_current_state_immediately(api_client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_carries_collection_summaries(api_client) -> None:
+    # Round 10: playlists must update live, which means their summaries have
+    # to be on the snapshot. Items deliberately are not -- only counts.
+    async def mutate():
+        await asyncio.sleep(0.3)
+        created = await api_client.post('/api/collections', json={'platform': 'instagram', 'name': 'Reels'})
+        assert created.status_code == 201, created.text
+
+    reader = asyncio.create_task(_frames(live_app(), count=2))
+    await mutate()
+    payloads, _ = await reader
+
+    assert payloads[0]['collections'] == []
+    summary = payloads[1]['collections'][0]
+    assert summary['name'] == 'Reels'
+    assert summary['item_count'] == 0
+    assert summary['downloaded_count'] == 0
+
+
+@pytest.mark.asyncio
 async def test_stream_pushes_again_once_state_changes(api_client, tmp_path) -> None:
     moved_to = str(tmp_path / 'somewhere-else')
 

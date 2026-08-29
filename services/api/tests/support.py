@@ -123,6 +123,26 @@ class InMemoryCollectionRepository:
     async def list_items(self, collection_id: str) -> list[CollectionItem]:
         return [item for item in self.items.values() if item.collection_id == collection_id]
 
+    async def list_items_page(
+        self, collection_id: str, *, state: str = 'all', limit: int = 50, offset: int = 0,
+    ) -> list[CollectionItem]:
+        items = sorted(
+            (item for item in self.items.values() if item.collection_id == collection_id),
+            key=lambda item: item.added_at,
+        )
+        if state == 'pending':
+            items = [item for item in items if item.downloaded_job_id is None]
+        elif state == 'downloaded':
+            items = [item for item in items if item.downloaded_job_id is not None]
+        return items[offset:offset + limit]
+
+    async def collection_counts(self) -> dict[str, tuple[int, int]]:
+        counts: dict[str, tuple[int, int]] = {}
+        for item in self.items.values():
+            total, downloaded = counts.get(item.collection_id, (0, 0))
+            counts[item.collection_id] = (total + 1, downloaded + (item.downloaded_job_id is not None))
+        return counts
+
     async def remove_item(self, collection_id: str, item_id: str) -> None:
         item = self.items.get(item_id)
         if item and item.collection_id == collection_id:

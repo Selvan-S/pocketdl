@@ -980,7 +980,56 @@ there is no browser automation in this environment. The build and typecheck
 are clean and the logic was traced by reading, but nobody has watched them in
 a real page.
 
-### Round 10 — long-list management (planned, not started)
+### Round 10 — long-list management (done, UI unverified by browser)
+Implemented 2026-08-29. Backend fully test-covered; the UI is verified only
+by build + typecheck + reading, since there is no browser automation here.
+
+What shipped:
+- **Collections are now on the SSE snapshot** as *summaries only* -- id,
+  name, `item_count`, and a new `downloaded_count`, never their items. This
+  is the enabling change for live playlists. `_event_snapshot` in
+  `app/api/routes.py` gathers `list_collections` alongside the other four
+  payloads; `ServerStateEvent`/`applyServerState` carry it into App state.
+  Payload stays small: a 128-item playlist contributes one summary row, not
+  128 item rows.
+- **`downloaded_count` is server-computed.** `SqliteCollectionRepository.
+  collection_counts()` is a single `GROUP BY` returning `{id: (total,
+  downloaded)}` -- it replaced the N+1 `list_items`-per-collection the
+  `/collections` route did, which mattered once that route began rebuilding
+  on every download progress tick.
+- **The notifier fires again after `mark_item_downloaded`.** The COMPLETED
+  progress tick fires *before* the item's row is marked downloaded, so
+  without a second nudge the Downloaded count lagged to the next 15s
+  heartbeat. `QueueService._run` now calls `on_change()` right after marking.
+- **`GET /collections/{id}/items` is paged and state-filtered** --
+  `state=all|pending|downloaded`, `limit`, `offset`. Plain offset paging;
+  the Round 9 date-cursor reasoning does not apply (no remote feed here).
+  `list_items` (the full internal listing used by download/dedupe) is
+  untouched; `list_items_page` is the new paged path.
+- **PlaylistCard** gained Pending / Downloaded / All tabs (counts from the
+  live summary) and prev/next pagination (24/page). It re-fetches the
+  visible page whenever its signature -- `tab:page:total:downloaded` --
+  moves, so a download finishing anywhere refreshes the open playlist
+  without a reload. Collections state was lifted out of InstagramPanel into
+  App so the SSE snapshot can own it.
+- **DownloadList** gained Active / Completed / All tabs and pagination
+  (20/page), client-side: the full list already arrives on the snapshot.
+
+Deliberately *not* done, flagged as follow-up: the downloads SSE payload
+still carries every job, so it grows with history. Server-side history
+paging (a separate `/api/downloads?limit&offset&status` endpoint, snapshot
+capped to active + recent) was left out to avoid risking the working live
+path and the whole-array client diff in this change. The playlist payload,
+the one the round's warning was about, is bounded by summaries.
+
+Regression tests added: `collection_counts` totals/downloaded,
+`list_items_page` state filter + offset paging (test_collection_repository),
+and the snapshot carrying collection summaries (test_events_stream).
+`/api/collections` was added to `POLLED_PATHS` in
+test_polling_does_not_hit_instagram since App's fallback refresh now fetches
+it -- it is local-only and passes the tripwire.
+
+### Round 10 — long-list management (original plan)
 Reported after using Round 9. Three related complaints, all the same shape:
 **lists only ever grow, and they do not update themselves.** Treat them as
 one piece of work, not three, because the fix is a shared pattern.
@@ -1032,7 +1081,10 @@ one piece of work, not three, because the fix is a shared pattern.
 - A "clear completed" / "remove downloaded from playlist" action is the
   cheap complement to all of this and probably worth doing at the same time.
 
-Nothing here is started. No code has been written for Round 10.
+(The plan above is now implemented -- see "Round 10 ... (done)" heading.
+The "clear completed / remove downloaded from playlist" convenience action
+it suggests was not built; the Downloaded tab plus per-item Remove cover the
+same need for now.)
 
 ### What's left
 - **Stories and Highlights have still never been live-verified**, and
@@ -1051,10 +1103,12 @@ Nothing here is started. No code has been written for Round 10.
   considered and *not* built: it would not lift the browser's
   per-host connection cap, and picking a smaller rendition removed 94% of
   the bytes without adding an SSRF-shaped endpoint.
-- **Long-list management (Round 10 above) is the next piece of work** and
-  the user's current top priority: playlists and the downloads list both
-  grow without bound, cannot be filtered by download state, and playlists do
-  not update live because collections are absent from the SSE snapshot.
+- **Long-list management (Round 10) is done** -- collections are on the SSE
+  snapshot as summaries, playlists have Pending/Downloaded/All tabs +
+  paging and update live, and the downloads list has the same tabs + paging.
+  Backend is test-covered; the UI is unverified by browser (no automation
+  here). Remaining follow-up: the downloads SSE payload still carries every
+  job (server-side history paging deliberately deferred).
 - Merging the pilot to `main`.
 
 ### Resuming this work

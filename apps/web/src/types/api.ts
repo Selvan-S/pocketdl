@@ -206,8 +206,22 @@ export interface Collection {
   platform: 'instagram';
   name: string;
   item_count: number;
+  /** How many of item_count have completed a download. Drives the
+   * Pending/Downloaded tab counts and the live "Downloaded" badge without
+   * shipping every row. */
+  downloaded_count: number;
   created_at: string;
   updated_at: string;
+}
+
+/** Which download-state slice of a playlist to fetch. Mirrors the server's
+ * `state` query param on GET /collections/{id}/items. */
+export type CollectionItemState = 'all' | 'pending' | 'downloaded';
+
+export interface CollectionItemsQuery {
+  state?: CollectionItemState;
+  limit?: number;
+  offset?: number;
 }
 
 export interface CollectionItem {
@@ -244,4 +258,8 @@ export interface ServerStateEvent {
   status: SystemStatus | null;
   captures: CaptureItem[] | null;
   settings: SettingsResponse | null;
+  /** Collection *summaries* only (counts, not items). Present so playlists
+   * update live; an open playlist re-fetches its own items when these
+   * counts move. Null when the server could not build this part. */
+  collections: Collection[] | null;
 }

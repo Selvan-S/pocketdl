@@ -7,6 +7,7 @@ import type {
   CollectionAddProfileItemsResponse,
   CollectionDownloadRequest,
   CollectionItem,
+  CollectionItemsQuery,
   DownloadCreateRequest,
   DownloadItem,
   InstagramProfilePreviewRequest,
@@ -87,7 +88,14 @@ export const api = {
   createCollection: (name: string) => request<Collection>('/collections', { method: 'POST', body: JSON.stringify({ platform: 'instagram', name }) }),
   renameCollection: (id: string, name: string) => request<Collection>(`/collections/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
   deleteCollection: (id: string) => request<{ ok: true }>(`/collections/${id}`, { method: 'DELETE' }),
-  listCollectionItems: (id: string) => request<CollectionItem[]>(`/collections/${id}/items`),
+  listCollectionItems: (id: string, query: CollectionItemsQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.state) params.set('state', query.state);
+    if (query.limit != null) params.set('limit', String(query.limit));
+    if (query.offset != null) params.set('offset', String(query.offset));
+    const suffix = params.toString();
+    return request<CollectionItem[]>(`/collections/${id}/items${suffix ? `?${suffix}` : ''}`);
+  },
   addProfileItemsToCollection: (id: string, payload: InstagramProfilePreviewRequest) =>
     request<CollectionAddProfileItemsResponse>(`/collections/${id}/profile-items`, {
       method: 'POST',
