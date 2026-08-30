@@ -390,6 +390,20 @@ class CollectionItemResponse(BaseModel):
     downloaded_job_id: str | None
 
 
+class FolderUsageResponse(BaseModel):
+    name: str
+    bytes: int
+    file_count: int
+
+
+class StorageUsageResponse(BaseModel):
+    directory: str
+    total_bytes: int
+    free_bytes: int
+    disk_total_bytes: int
+    folders: list[FolderUsageResponse]
+
+
 class DownloadPresetCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     preset: Literal['best', '1080p', '720p', '480p', 'audio'] = 'best'

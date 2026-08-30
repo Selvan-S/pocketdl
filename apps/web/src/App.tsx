@@ -5,6 +5,7 @@ import { DownloadList } from './components/DownloadList';
 import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { StoragePanel } from './components/StoragePanel';
 import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, DownloadPreset, DownloadPresetCreateRequest, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
 import {
   collectionsThatCompleted,
@@ -484,6 +485,8 @@ export default function App() {
           }}
         />
       </details>
+
+      <StoragePanel />
 
       <footer>
         <span className="footer-path">Downloads: {settings?.download_directory ?? 'Unavailable'}</span>

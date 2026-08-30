@@ -249,6 +249,20 @@ export interface CollectionDownloadRequest {
   retries?: number;
 }
 
+export interface FolderUsage {
+  name: string;
+  bytes: number;
+  file_count: number;
+}
+
+export interface StorageUsage {
+  directory: string;
+  total_bytes: number;
+  free_bytes: number;
+  disk_total_bytes: number;
+  folders: FolderUsage[];
+}
+
 export interface DownloadPreset {
   id: string;
   name: string;

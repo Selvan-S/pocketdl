@@ -17,6 +17,7 @@ import type {
   InstagramSessionStatus,
   ProfileItemPreview,
   SettingsResponse,
+  StorageUsage,
   SystemStatus,
 } from '../types/api';
 
@@ -69,6 +70,7 @@ export const api = {
   retryDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/retry`, { method: 'POST' }),
   deleteDownload: (id: string) => request<{ ok: true }>(`/downloads/${id}`, { method: 'DELETE' }),
   status: () => request<SystemStatus>('/system/status'),
+  storage: () => request<StorageUsage>('/storage'),
   listPresets: () => request<DownloadPreset[]>('/presets'),
   createPreset: (payload: DownloadPresetCreateRequest) => request<DownloadPreset>('/presets', { method: 'POST', body: JSON.stringify(payload) }),
   deletePreset: (id: string) => request<{ ok: true }>(`/presets/${id}`, { method: 'DELETE' }),

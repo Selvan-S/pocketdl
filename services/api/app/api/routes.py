@@ -30,11 +30,13 @@ from .schemas import (
     DownloadPresetCreateRequest,
     DownloadPresetResponse,
     DownloadResponse,
+    FolderUsageResponse,
     InstagramProfilePreviewRequest,
     InstagramProfilePreviewResponse,
     InstagramSessionRequest,
     InstagramSessionStatusResponse,
     ProfileItemPreviewResponse,
+    StorageUsageResponse,
     SystemStatusResponse,
     SettingsResponse,
     SettingsUpdateRequest,
@@ -44,6 +46,7 @@ from ..application.collections.service import CollectionService
 from ..core.path_settings import normalize_download_directory
 from ..core.platform import DirectoryPickerUnavailable, browse_for_directory, open_directory
 from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
+from ..infrastructure.storage import scan_storage
 from ..core.settings_store import clear_download_directory, save_download_directory
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
 from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
@@ -557,6 +560,25 @@ async def browse_download_directory(request: Request) -> BrowseDirectoryResponse
     except DirectoryPickerUnavailable as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
     return BrowseDirectoryResponse(path=chosen)
+
+
+@router.get('/storage', response_model=StorageUsageResponse)
+async def storage_usage(request: Request) -> StorageUsageResponse:
+    """Disk usage of the download directory, broken down by top-level folder.
+
+    Scanning a large tree is slow, so it runs in a worker thread and is not
+    part of the SSE snapshot or any polled path -- the UI fetches it on
+    demand.
+    """
+    directory = request.app.state.settings.download_directory
+    usage = await asyncio.to_thread(scan_storage, directory)
+    return StorageUsageResponse(
+        directory=usage.directory,
+        total_bytes=usage.total_bytes,
+        free_bytes=usage.free_bytes,
+        disk_total_bytes=usage.disk_total_bytes,
+        folders=[FolderUsageResponse(name=f.name, bytes=f.bytes, file_count=f.file_count) for f in usage.folders],
+    )
 
 
 @router.get('/system/status', response_model=SystemStatusResponse)
