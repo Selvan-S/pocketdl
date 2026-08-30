@@ -385,12 +385,40 @@ class InstagramSessionStatusResponse(BaseModel):
 
 
 class CollectionCreateRequest(BaseModel):
-    platform: Literal['instagram'] = 'instagram'
+    platform: Literal['instagram', 'generic'] = 'instagram'
     name: str = Field(min_length=1, max_length=200)
 
 
 class CollectionRenameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+
+
+class CollectionAddUrlsRequest(BaseModel):
+    """Add plain URLs to a generic playlist. Each becomes an item downloaded
+    via yt-dlp, the same as a paste-a-URL download."""
+
+    urls: list[str] = Field(min_length=1, max_length=500)
+
+    @field_validator('urls')
+    @classmethod
+    def validate_urls(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for raw in value:
+            url = raw.strip()
+            if not url:
+                continue
+            parsed = urlparse(url)
+            if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+                raise ValueError(f'Not an http(s) URL: {url[:80]}')
+            cleaned.append(url)
+        if not cleaned:
+            raise ValueError('No valid URLs provided.')
+        return cleaned
+
+
+class CollectionAddUrlsResponse(BaseModel):
+    added: int
+    already_present: int
 
 
 class CollectionResponse(BaseModel):

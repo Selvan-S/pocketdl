@@ -112,7 +112,10 @@ export const api = {
   verifyInstagramSession: () => request<InstagramSessionStatus>('/instagram/session/verify', { method: 'POST' }),
 
   listCollections: () => request<Collection[]>('/collections'),
-  createCollection: (name: string) => request<Collection>('/collections', { method: 'POST', body: JSON.stringify({ platform: 'instagram', name }) }),
+  createCollection: (name: string, platform: 'instagram' | 'generic' = 'instagram') =>
+    request<Collection>('/collections', { method: 'POST', body: JSON.stringify({ platform, name }) }),
+  addUrlsToCollection: (id: string, urls: string[]) =>
+    request<{ added: number; already_present: number }>(`/collections/${id}/urls`, { method: 'POST', body: JSON.stringify({ urls }) }),
   renameCollection: (id: string, name: string) => request<Collection>(`/collections/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
   deleteCollection: (id: string) => request<{ ok: true }>(`/collections/${id}`, { method: 'DELETE' }),
   listCollectionItems: (id: string, query: CollectionItemsQuery = {}) => {

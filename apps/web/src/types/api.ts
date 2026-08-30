@@ -226,9 +226,11 @@ export interface InstagramSessionStatus {
   verified_username: string | null;
 }
 
+export type CollectionPlatform = 'instagram' | 'generic';
+
 export interface Collection {
   id: string;
-  platform: 'instagram';
+  platform: CollectionPlatform;
   name: string;
   item_count: number;
   /** How many of item_count have completed a download. Drives the

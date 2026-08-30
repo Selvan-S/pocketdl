@@ -154,8 +154,25 @@ class YtDlpService:
 
         raise RuntimeError(last_output or 'yt-dlp analysis failed.')
 
-    def _output_template(self, job: DownloadJob, conflict_strategy: ConflictStrategy = ConflictStrategy.SKIP) -> str:
+    def _output_template(
+        self,
+        job: DownloadJob,
+        conflict_strategy: ConflictStrategy = ConflictStrategy.SKIP,
+        output_subdir: str | None = None,
+    ) -> str:
         directory = self.settings.download_directory
+        # A generic playlist writes into <download dir>/<platform>/<playlist>/.
+        # Each path segment is sanitized so a playlist name can't escape the
+        # download directory; yt-dlp creates the folders as needed.
+        if output_subdir:
+            for raw_segment in output_subdir.replace('\\', '/').split('/'):
+                segment = raw_segment.strip()
+                if not segment or segment in {'.', '..'}:
+                    continue
+                try:
+                    directory = directory / sanitize_filename(segment)
+                except ValueError:
+                    continue
         if job.filename:
             stem = sanitize_filename(job.filename)
             # RENAME needs the collision resolved up front, since we know the
@@ -231,6 +248,7 @@ class YtDlpService:
         request_context: RequestContext,
         attempt: DownloadAttempt,
         media_options: MediaOptions = MediaOptions(),
+        output_subdir: str | None = None,
     ) -> list[str]:
         args = [
             sys.executable,
@@ -244,7 +262,7 @@ class YtDlpService:
             '--concurrent-fragments',
             str(max(1, min(concurrent_fragments, 32))),
             '--output',
-            self._output_template(job, media_options.conflict_strategy),
+            self._output_template(job, media_options.conflict_strategy, output_subdir),
             *format_args(preset, format_id),
         ]
         args += self._conflict_args(media_options.conflict_strategy)
@@ -300,6 +318,7 @@ class YtDlpService:
         collection_item_id: str | None = None,
         media_options: MediaOptions = MediaOptions(),
         subtitle_url: str | None = None,
+        output_subdir: str | None = None,
     ) -> DownloadJob:
         if job.engine is DownloadEngine.GALLERY_DL:
             return await self.gallery_dl.download(
@@ -354,6 +373,7 @@ class YtDlpService:
                 request_context=request_context,
                 attempt=attempt,
                 media_options=media_options,
+                output_subdir=output_subdir,
             )
             return_code, lines = await self._run_process(job, args, on_progress)
             output = '\n'.join(lines)

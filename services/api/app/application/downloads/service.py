@@ -30,6 +30,10 @@ class JobOptions:
     collection_item_id: str | None
     media_options: MediaOptions = MediaOptions()
     subtitle_url: str | None = None
+    # Relative subfolder under the download directory this job writes into
+    # (e.g. "Web/My Playlist"). None writes to the root. Standard downloads
+    # only; captured/instaloader manage their own paths.
+    output_subdir: str | None = None
 
 
 class QueueService:
@@ -83,6 +87,7 @@ class QueueService:
         collection_item_id: str | None = None,
         media_options: MediaOptions = MediaOptions(),
         subtitle_url: str | None = None,
+        output_subdir: str | None = None,
     ) -> DownloadJob:
         normalized_filename = sanitize_filename(filename) if filename else None
         if not normalized_filename and title:
@@ -130,6 +135,7 @@ class QueueService:
             collection_item_id=collection_item_id,
             media_options=media_options,
             subtitle_url=subtitle_url,
+            output_subdir=output_subdir,
         )
         self.tasks[job.id] = asyncio.create_task(self._run(job.id))
         return job
@@ -164,6 +170,7 @@ class QueueService:
                     media_options=options.media_options,
                     on_progress=self._record_progress,
                     subtitle_url=options.subtitle_url,
+                    output_subdir=options.output_subdir,
                 )
                 # A pause terminated the process mid-download; the downloader
                 # will have recorded FAILED. Override to PAUSED (keeping the
