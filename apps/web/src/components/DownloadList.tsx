@@ -1,5 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { DownloadItem, DownloadStatus } from '../types/api';
+import type { DownloadErrorCategory, DownloadItem, DownloadStatus } from '../types/api';
+
+// Turns an opaque error category into an actionable hint. Rate limiting is
+// the one that most needs it: the fix is to *wait*, and retrying eagerly can
+// make it worse (an account can get temporarily restricted). Returns null
+// when the raw error line already speaks for itself.
+function guidanceFor(category: DownloadErrorCategory | null): string | null {
+  switch (category) {
+    case 'rate_limited':
+      return 'The site is rate-limiting requests. Wait a few minutes before retrying — repeated attempts can extend the block.';
+    case 'authentication_required':
+      return 'This needs a signed-in session. Add the site’s session/cookie, then retry.';
+    case 'http_403':
+      return 'The server refused the request (403). For HLS/DASH sites, try Browser Capture instead.';
+    case 'geo_restriction':
+      return 'This media isn’t available in your region.';
+    case 'drm':
+      return 'This media is DRM-protected and cannot be downloaded.';
+    case 'network_error':
+      return 'Network problem reaching the site. Check your connection, then retry.';
+    default:
+      return null;
+  }
+}
 
 // The downloads list grows without bound as history accumulates. Tabs split
 // it by state and pagination bounds what is rendered, the same shape as the
@@ -99,10 +122,13 @@ export function DownloadList({ items, onCancel, onRetry, onDelete }: {
             {item.exit_code != null && <span>Exit code: {item.exit_code}</span>}
           </div>
           {item.error && (
-            <div className="error">
+            <div className={`error ${item.error_category === 'rate_limited' ? 'rate-limited' : ''}`}>
               {item.error_category && <strong>{item.error_category.replaceAll('_', ' ').toUpperCase()}: </strong>}
               {item.error}
             </div>
+          )}
+          {item.status === 'failed' && guidanceFor(item.error_category) && (
+            <div className="field-help">{guidanceFor(item.error_category)}</div>
           )}
           {item.retry_count > 0 && <div className="field-help">Automatic retries: {item.retry_count} · Strategy: {item.impersonation}</div>}
           {item.status === 'failed' && item.error_details && (

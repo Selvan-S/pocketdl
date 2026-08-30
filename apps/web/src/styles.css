@@ -59,6 +59,7 @@ button.secondary { background: transparent; border: 1px solid #2a3652; color: #d
 .actions { display:flex; justify-content:flex-end; margin-top: 10px; }
 .actions button { min-height: 44px; padding: 0 14px; font-size: 12px; background: transparent; border: 1px solid #2a3652; color: #ccd6e9; }
 .error { margin-top: 10px; color: #ff9c9c; font-size: 12px; white-space: pre-wrap; }
+.error.rate-limited { color: #ffce8a; }
 .error-details { margin-top: 10px; border: 1px solid #3a2630; border-radius: 10px; background: #0b101c; }
 .error-details summary { cursor: pointer; padding: 9px 10px; color: #ffc3c3; font-size: 12px; }
 .error-details pre { margin: 0; padding: 10px; max-height: 320px; overflow: auto; color: #e1baba; font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid #2f2530; }

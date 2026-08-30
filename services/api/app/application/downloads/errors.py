@@ -16,7 +16,20 @@ def classify_download_error(output: str) -> DownloadErrorCategory:
         return DownloadErrorCategory.SSL_CERTIFICATE_ERROR
     if 'ffmpeg' in text and ('error' in text or 'failed' in text):
         return DownloadErrorCategory.FFMPEG_ERROR
-    if 'rate limit' in text or 'too many requests' in text or 'http error 429' in text:
+    if (
+        'rate limit' in text
+        or 'rate-limit' in text
+        or 'too many requests' in text
+        or 'http error 429' in text
+        or 'status code: 429' in text
+        # Phrasings platforms use in the body rather than the status line.
+        # The Instagram one ("please wait a few minutes before you try
+        # again") was observed live against a real session, see CLAUDE.md.
+        or 'please wait a few minutes' in text
+        or 'wait a few minutes and try again' in text
+        or 'try again later' in text
+        or 'temporarily blocked' in text
+    ):
         return DownloadErrorCategory.RATE_LIMITED
     if 'authentication required' in text or 'login required' in text or 'sign in to confirm' in text or 'redirect to login' in text:
         return DownloadErrorCategory.AUTHENTICATION_REQUIRED
