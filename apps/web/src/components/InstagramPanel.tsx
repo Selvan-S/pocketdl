@@ -238,6 +238,20 @@ function ProfileBrowser({
   // server-side, so it must be what was actually asked for, not whatever the
   // form has been edited to since.
   const [lastQuery, setLastQuery] = useState<InstagramProfilePreviewRequest | null>(null);
+  // "Add all matching" pages the profile in BULK_ADD_LIMIT chunks. These
+  // remember where the last chunk stopped so "Add next batch" can continue
+  // walking backward through the whole profile without the user typing dates.
+  const [syncCollectionId, setSyncCollectionId] = useState<string | null>(null);
+  const [syncCursor, setSyncCursor] = useState<string | null>(null);
+  const [syncHasMore, setSyncHasMore] = useState(false);
+  const [syncTotalAdded, setSyncTotalAdded] = useState(0);
+
+  function resetSync() {
+    setSyncCollectionId(null);
+    setSyncCursor(null);
+    setSyncHasMore(false);
+    setSyncTotalAdded(0);
+  }
 
   // A playlist the user picked can be deleted from the panel below, leaving
   // this holding an id that no longer exists. The <select> then falls back to
@@ -296,6 +310,7 @@ function ProfileBrowser({
     setSelected(new Set());
     setHasMore(false);
     setNextPostedBefore(null);
+    resetSync();
     try {
       const result = await api.previewInstagramProfile(query);
       setItems(result.items);
@@ -377,9 +392,9 @@ function ProfileBrowser({
     }
   }
 
-  /** Adds everything the current query matches, without loading it all into
-   * the page first -- the point of the feature: a profile with 128 reels
-   * should not need three manual pages and 128 cards on screen to select. */
+  /** Adds the first BULK_ADD_LIMIT matching items, then remembers the cursor
+   * so "Add next batch" can walk the rest of the profile backward -- no manual
+   * month-by-month filtering needed for a full-profile add. */
   async function addAllMatching() {
     if (!lastQuery) return;
     setAdding(true);
@@ -390,13 +405,49 @@ function ProfileBrowser({
       const result = await api.addProfileItemsToCollection(collectionId, { ...lastQuery, limit: BULK_ADD_LIMIT });
       setTargetCollectionId(collectionId);
       setSelected(new Set());
+      setSyncCollectionId(collectionId);
+      setSyncCursor(result.next_posted_before);
+      setSyncHasMore(result.has_more);
+      setSyncTotalAdded(result.added);
       const parts = [`Added ${result.added} item(s)`];
       if (result.already_present > 0) parts.push(`${result.already_present} already in the playlist`);
-      if (result.has_more) parts.push(`stopped at ${BULK_ADD_LIMIT} -- narrow the date range for the rest`);
+      if (result.has_more) parts.push(`more available -- click "Add next batch" to keep going`);
       onMessage(`${parts.join(' - ')}.`);
       await onCollectionsChanged();
     } catch (caughtError) {
       const text = caughtError instanceof Error ? caughtError.message : 'Unable to add items to the playlist.';
+      setError(text);
+      onMessage(text);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  /** Continues a full-profile add from where the last batch stopped, paging
+   * backward one BULK_ADD_LIMIT chunk at a time. User-paced (one click per
+   * chunk) so Instagram's rate limits aren't provoked by an unattended run. */
+  async function addNextBatch() {
+    if (!lastQuery || !syncCollectionId || !syncCursor) return;
+    setAdding(true);
+    setError(null);
+    try {
+      const result = await api.addProfileItemsToCollection(syncCollectionId, {
+        ...lastQuery,
+        posted_before: syncCursor,
+        limit: BULK_ADD_LIMIT,
+      });
+      const total = syncTotalAdded + result.added;
+      setSyncTotalAdded(total);
+      setSyncCursor(result.next_posted_before);
+      setSyncHasMore(result.has_more);
+      onMessage(
+        result.has_more
+          ? `Added ${result.added} more (${total} total). More available — click "Add next batch" again.`
+          : `Added ${result.added} more (${total} total). That's the whole profile.`,
+      );
+      await onCollectionsChanged();
+    } catch (caughtError) {
+      const text = caughtError instanceof Error ? caughtError.message : 'Unable to add the next batch.';
       setError(text);
       onMessage(text);
     } finally {
@@ -511,11 +562,27 @@ function ProfileBrowser({
               className="secondary"
               disabled={adding || !lastQuery}
               onClick={() => void addAllMatching()}
-              title={`Adds everything matching the current filters, up to ${BULK_ADD_LIMIT}, without loading it all here.`}
+              title={`Adds the first ${BULK_ADD_LIMIT} matching, then offers "Add next batch" to page the rest of the profile.`}
             >
               {adding ? 'Adding…' : 'Add all matching'}
             </button>
+            {syncHasMore && syncCollectionId && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={adding}
+                onClick={() => void addNextBatch()}
+                title="Adds the next older batch, continuing a full-profile add one chunk at a time."
+              >
+                {adding ? 'Adding…' : `Add next batch (+${BULK_ADD_LIMIT})`}
+              </button>
+            )}
           </div>
+          {syncTotalAdded > 0 && (
+            <div className="field-help">
+              Full-profile add: {syncTotalAdded} item(s) so far{syncHasMore ? ' — more remain, keep clicking "Add next batch".' : ' — complete.'}
+            </div>
+          )}
         </>
       )}
     </div>
