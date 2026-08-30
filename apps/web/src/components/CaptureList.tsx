@@ -68,6 +68,7 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
   // its default rather than us forcing a quality the user did not choose.
   const [variantIndex, setVariantIndex] = useState<number | undefined>(undefined);
   const [subtitles, setSubtitles] = useState(false);
+  const [embedSubtitles, setEmbedSubtitles] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const hasVariants = item.variants.length > 0;
@@ -80,6 +81,7 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
         filename: filename.trim() || undefined,
         variant_index: variantIndex,
         subtitles: subtitles || undefined,
+        embed_subtitles: subtitles ? embedSubtitles : undefined,
       });
     } finally {
       setBusy(false);
@@ -167,10 +169,18 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
         )}
 
         {item.capture_type === 'hls' && (
-          <label className="checkbox-chip capture-subtitle-toggle">
-            <input type="checkbox" checked={subtitles} onChange={(event) => setSubtitles(event.target.checked)} />
-            Include subtitles (if the stream has any)
-          </label>
+          <div className="capture-subtitle-toggle">
+            <label className="checkbox-chip">
+              <input type="checkbox" checked={subtitles} onChange={(event) => setSubtitles(event.target.checked)} />
+              Include subtitles (if the stream has any)
+            </label>
+            {subtitles && (
+              <label className="checkbox-chip">
+                <input type="checkbox" checked={!embedSubtitles} onChange={(event) => setEmbedSubtitles(!event.target.checked)} />
+                Save as a separate .srt file (instead of embedding)
+              </label>
+            )}
+          </div>
         )}
 
         <div className="capture-actions">

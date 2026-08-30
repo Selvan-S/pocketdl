@@ -47,3 +47,22 @@ def test_ffmpeg_args_subtitle_index_after_separate_audio() -> None:
     # video=0, audio=1, subtitle=2
     assert '1:a:0?' in args
     assert '2:s:0?' in args
+
+
+def test_ffmpeg_args_sidecar_writes_separate_srt() -> None:
+    args = CapturedMediaService._build_ffmpeg_args(
+        'https://cdn.example/v0/index.m3u8', Path('/downloads/out.mp4'), '', None,
+        subtitle_url='https://cdn.example/subs/en.m3u8', embed_subtitles=False,
+    )
+    assert 'mov_text' not in args
+    assert '-c:s' in args and args[args.index('-c:s') + 1] == 'srt'
+    assert 'out.srt' in ' '.join(str(a) for a in args)
+
+
+def test_ffmpeg_args_embed_by_default_has_no_sidecar() -> None:
+    args = CapturedMediaService._build_ffmpeg_args(
+        'https://cdn.example/v0/index.m3u8', Path('/downloads/out.mp4'), '', None,
+        subtitle_url='https://cdn.example/subs/en.m3u8', embed_subtitles=True,
+    )
+    assert 'mov_text' in args
+    assert 'out.srt' not in ' '.join(str(a) for a in args)

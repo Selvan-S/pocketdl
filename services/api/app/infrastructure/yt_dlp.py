@@ -327,6 +327,7 @@ class YtDlpService:
                 on_progress=on_progress,
                 audio_url=audio_url,
                 subtitle_url=subtitle_url,
+                embed_subtitles=media_options.embed_subtitles,
             )
 
         job.status = DownloadStatus.RUNNING

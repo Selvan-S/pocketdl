@@ -465,6 +465,9 @@ async def download_capture(capture_id: str, request: Request, payload: CaptureDo
         title=capture.page_title,
         audio_url=audio_url,
         subtitle_url=subtitle_url,
+        # Only embed vs sidecar matters to the ffmpeg path; the rest of
+        # MediaOptions is for standard downloads.
+        media_options=MediaOptions(embed_subtitles=options.embed_subtitles),
     )
     return to_response(job)
 

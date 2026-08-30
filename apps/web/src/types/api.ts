@@ -148,6 +148,8 @@ export interface CaptureDownloadRequest {
   subtitles?: boolean;
   /** Preferred subtitle language code (e.g. "en"); omitted uses the default track. */
   subtitle_language?: string;
+  /** True embeds subtitles into the mp4; false writes a sidecar .srt. */
+  embed_subtitles?: boolean;
 }
 
 export type FilenameTemplate = 'title' | 'uploader-title' | 'date-title' | 'title-id';
