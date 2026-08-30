@@ -686,7 +686,7 @@ export default function App() {
 
       <footer>
         <span className="footer-path">Downloads: {settings?.download_directory ?? 'Unavailable'}</span>
-        <span>PocketDL v{status?.app_version ?? '0.2.3'}</span>
+        <span>PocketDL v{status?.app_version ?? '0.3.0'}</span>
       </footer>
     </main>
   );
