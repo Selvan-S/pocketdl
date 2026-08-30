@@ -1,6 +1,6 @@
 export type DownloadErrorCategory = 'http_401' | 'http_403' | 'http_404' | 'geo_restriction' | 'drm' | 'unsupported_url' | 'format_error' | 'ffmpeg_error' | 'network_error' | 'authentication_required' | 'rate_limited' | 'cancelled' | 'unknown';
 
-export type DownloadStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type DownloadStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 export interface DownloadItem {
   id: string;
@@ -146,9 +146,18 @@ export interface CaptureDownloadRequest {
   variant_index?: number;
 }
 
+export type FilenameTemplate = 'title' | 'uploader-title' | 'date-title' | 'title-id';
+
 export interface SettingsResponse {
   download_directory: string;
   default_download_directory: string;
+  filename_template: FilenameTemplate;
+  clean_titles: boolean;
+}
+
+export interface SettingsNamingUpdate {
+  filename_template?: FilenameTemplate;
+  clean_titles?: boolean;
 }
 
 export interface BrowseDirectoryResponse {
@@ -257,6 +266,16 @@ export interface CollectionDownloadRequest {
   preset?: 'best' | '1080p' | '720p' | 'audio';
   concurrent_fragments?: number;
   retries?: number;
+}
+
+export interface DownloadHistoryQuery {
+  limit?: number;
+  offset?: number;
+}
+
+export interface DownloadHistoryResponse {
+  items: DownloadItem[];
+  has_more: boolean;
 }
 
 export interface UpdateCheck {

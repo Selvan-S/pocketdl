@@ -126,6 +126,12 @@ class UpdateCheckResponse(BaseModel):
     error: str | None = None
 
 
+class DownloadHistoryResponse(BaseModel):
+    items: list[DownloadResponse]
+    # True when older finished downloads exist beyond this page.
+    has_more: bool
+
+
 class SystemStatusResponse(BaseModel):
     app_version: str
     yt_dlp_version: str | None
@@ -262,10 +268,16 @@ class CaptureResponse(BaseModel):
 class SettingsResponse(BaseModel):
     download_directory: str
     default_download_directory: str
+    filename_template: str = 'title'
+    clean_titles: bool = True
 
 
 class SettingsUpdateRequest(BaseModel):
     download_directory: str = Field(min_length=1, max_length=2000)
+    # Output-naming preferences. Optional so a caller can update just the
+    # directory (the existing behaviour) without touching them.
+    filename_template: Literal['title', 'uploader-title', 'date-title', 'title-id'] | None = None
+    clean_titles: bool | None = None
 
 
 class BrowseDirectoryResponse(BaseModel):

@@ -8,6 +8,8 @@ from app.infrastructure.yt_dlp import YtDlpService
 
 class _StubSettings:
     download_directory = Path('/downloads')
+    filename_template = 'title'
+    clean_titles = False
 
 
 class _StubCapturedMedia:

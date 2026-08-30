@@ -9,6 +9,8 @@ import type {
   CollectionItem,
   CollectionItemsQuery,
   DownloadCreateRequest,
+  DownloadHistoryQuery,
+  DownloadHistoryResponse,
   DownloadItem,
   DownloadPreset,
   DownloadPresetCreateRequest,
@@ -17,6 +19,7 @@ import type {
   InstagramProfilePreviewResponse,
   InstagramSessionStatus,
   ProfileItemPreview,
+  SettingsNamingUpdate,
   SettingsResponse,
   StorageUsage,
   SystemStatus,
@@ -66,10 +69,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listDownloads: () => request<DownloadItem[]>('/downloads'),
+  downloadHistory: (query: DownloadHistoryQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.limit != null) params.set('limit', String(query.limit));
+    if (query.offset != null) params.set('offset', String(query.offset));
+    const suffix = params.toString();
+    return request<DownloadHistoryResponse>(`/downloads/history${suffix ? `?${suffix}` : ''}`);
+  },
   createDownload: (payload: DownloadCreateRequest) => request<DownloadItem>('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   analyze: (payload: Pick<DownloadCreateRequest, 'url' | 'request_context'>) => request<AnalyzeResponse>('/analyze', { method: 'POST', body: JSON.stringify(payload) }),
   cancelDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/cancel`, { method: 'POST' }),
   retryDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/retry`, { method: 'POST' }),
+  pauseDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/pause`, { method: 'POST' }),
+  resumeDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/resume`, { method: 'POST' }),
   deleteDownload: (id: string) => request<{ ok: true }>(`/downloads/${id}`, { method: 'DELETE' }),
   status: () => request<SystemStatus>('/system/status'),
   storage: () => request<StorageUsage>('/storage'),
@@ -84,7 +96,8 @@ export const api = {
   downloadCapture: (id: string, payload: CaptureDownloadRequest) => request<DownloadItem>(`/captures/${id}/download`, { method: 'POST', body: JSON.stringify(payload) }),
   deleteCapture: (id: string) => request<{ ok: true }>(`/captures/${id}`, { method: 'DELETE' }),
   settings: () => request<SettingsResponse>('/settings'),
-  updateSettings: (downloadDirectory: string) => request<SettingsResponse>('/settings', { method: 'PUT', body: JSON.stringify({ download_directory: downloadDirectory }) }),
+  updateSettings: (downloadDirectory: string, naming: SettingsNamingUpdate = {}) =>
+    request<SettingsResponse>('/settings', { method: 'PUT', body: JSON.stringify({ download_directory: downloadDirectory, ...naming }) }),
   resetDownloadDirectory: () => request<SettingsResponse>('/settings/reset-download-directory', { method: 'POST' }),
   openDownloadDirectory: () => request<{ ok: true; download_directory: string }>('/settings/open-download-directory', { method: 'POST' }),
   browseDownloadDirectory: () => request<BrowseDirectoryResponse>('/settings/browse-download-directory', { method: 'POST' }),

@@ -1015,12 +1015,9 @@ What shipped:
 - **DownloadList** gained Active / Completed / All tabs and pagination
   (20/page), client-side: the full list already arrives on the snapshot.
 
-Deliberately *not* done, flagged as follow-up: the downloads SSE payload
-still carries every job, so it grows with history. Server-side history
-paging (a separate `/api/downloads?limit&offset&status` endpoint, snapshot
-capped to active + recent) was left out to avoid risking the working live
-path and the whole-array client diff in this change. The playlist payload,
-the one the round's warning was about, is bounded by summaries.
+Follow-up flagged here (downloads SSE payload carrying every job) — **now
+done in product-polish Round 4**: the snapshot is capped to active + recent
+40 and older history is paged from `GET /api/downloads/history`.
 
 Regression tests added: `collection_counts` totals/downloaded,
 `list_items_page` state filter + offset paging (test_collection_repository),
@@ -1107,8 +1104,8 @@ same need for now.)
   snapshot as summaries, playlists have Pending/Downloaded/All tabs +
   paging and update live, and the downloads list has the same tabs + paging.
   Backend is test-covered; the UI is unverified by browser (no automation
-  here). Remaining follow-up: the downloads SSE payload still carries every
-  job (server-side history paging deliberately deferred).
+  here). Follow-up (downloads SSE payload growth) resolved in product-polish
+  Round 4 via snapshot cap + `/api/downloads/history` paging.
 - Merging the pilot to `main`.
 
 ### Resuming this work
@@ -1324,6 +1321,23 @@ reading only (no browser automation here).
 - **Update-available banner — done.** `GET /api/system/update-check` compares
   installed yt-dlp against PyPI (fetched once on load, never polled); a
   dismissible banner offers "Update now". gallery-dl not covered (not live).
+
+## Product-polish Round 4 — done (branch feature/product-polish-round4)
+Three items, backend test-covered; all UI verified by build + typecheck +
+reading only (no browser automation here).
+- **Downloads history paging — done.** Closes the Round 10 follow-up: the SSE
+  snapshot now carries active jobs + only the most recent 40 finished ones
+  (`repository.list_recent`); older history is paged from `GET
+  /api/downloads/history` (limit/offset, has_more) and merged client-side
+  ("Load older downloads"). The payload is finally bounded.
+- **Pause / resume — done.** A PAUSED status built on the retry/resume path;
+  pause keeps the partial .part and records PAUSED (the queue tracks paused
+  ids so a killed process isn't misread as FAILED), resume continues it.
+  `POST /downloads/{id}/pause` and `/resume`.
+- **Filename templates & title cleanup — done.** Persisted `filename_template`
+  (fixed safe patterns, no raw template exposed) and `clean_titles` (yt-dlp
+  --replace-in-metadata, filename/embedded title only). settings_store now
+  merges keys instead of overwriting.
 
 ## Medium-term (remaining)
 - Wi-Fi-only download gating. Not previously listed — guards mobile data

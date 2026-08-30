@@ -264,7 +264,8 @@ both done. Immediate priority is now, per explicit request:
    and update live, and the downloads list has the same tabs + paging.
    Backend is test-covered; the UI is verified only by build + typecheck
    (no browser automation here). Follow-up left open: the downloads SSE
-   payload still carries every job (server-side history paging deferred).
+   payload growth was later resolved in product-polish Round 4 (snapshot
+   capped to active + recent, older history paged via /api/downloads/history).
 2. Multi-platform extraction beyond Instagram (docs/docs_POCKETDL_ROADMAP.md
    Phase 5) and the product-polish enhancement plan in the same doc.
 3. Keep those sequenced behind the two narrow Phase 2 remnants above

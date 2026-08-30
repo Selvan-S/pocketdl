@@ -1,9 +1,9 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
-import type { SettingsResponse } from '../types/api';
+import type { FilenameTemplate, SettingsNamingUpdate, SettingsResponse } from '../types/api';
 
 interface Props {
   value: SettingsResponse | null;
-  onSave: (path: string) => Promise<SettingsResponse>;
+  onSave: (path: string, naming?: SettingsNamingUpdate) => Promise<SettingsResponse>;
   onReset: () => Promise<SettingsResponse>;
   onOpen: () => Promise<void>;
   onBrowse: () => Promise<string | null>;
@@ -12,14 +12,37 @@ interface Props {
   busy: boolean;
 }
 
+const FILENAME_TEMPLATE_OPTIONS: Array<{ value: FilenameTemplate; label: string }> = [
+  { value: 'title', label: 'Title' },
+  { value: 'uploader-title', label: 'Uploader - Title' },
+  { value: 'date-title', label: 'Date - Title' },
+  { value: 'title-id', label: 'Title [id]' },
+];
+
 export function SettingsPanel({ value, onSave, onReset, onOpen, onBrowse, onExport, onImport, busy }: Props) {
   const [path, setPath] = useState('');
   const [browsing, setBrowsing] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const [template, setTemplate] = useState<FilenameTemplate>('title');
+  const [cleanTitles, setCleanTitles] = useState(true);
 
   useEffect(() => {
     setPath(value?.download_directory ?? '');
   }, [value?.download_directory]);
+
+  useEffect(() => {
+    if (value) {
+      setTemplate(value.filename_template);
+      setCleanTitles(value.clean_titles);
+    }
+  }, [value?.filename_template, value?.clean_titles]);
+
+  async function saveNaming(naming: SettingsNamingUpdate) {
+    if (!value) return;
+    // Naming updates ride the same PUT, which requires a directory -- send the
+    // persisted one so toggling naming never moves the download location.
+    await onSave(value.download_directory, naming);
+  }
 
   async function save() {
     const next = path.trim();
@@ -86,6 +109,40 @@ export function SettingsPanel({ value, onSave, onReset, onOpen, onBrowse, onExpo
         <button className="secondary" disabled={busy} onClick={() => void onReset()}>Reset default</button>
       </div>
       {value && <div className="settings-default">Default: {value.default_download_directory}</div>}
+
+      <div className="settings-header settings-subsection">
+        <div>
+          <h2>Output naming</h2>
+          <p>How saved files are named (when you don’t type a file name yourself).</p>
+        </div>
+      </div>
+      <label htmlFor="filename-template">Filename pattern</label>
+      <select
+        id="filename-template"
+        value={template}
+        disabled={busy || !value}
+        onChange={(event) => {
+          const next = event.target.value as FilenameTemplate;
+          setTemplate(next);
+          void saveNaming({ filename_template: next });
+        }}
+      >
+        {FILENAME_TEMPLATE_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+      <label className="checkbox-chip">
+        <input
+          type="checkbox"
+          checked={cleanTitles}
+          disabled={busy || !value}
+          onChange={(event) => {
+            setCleanTitles(event.target.checked);
+            void saveNaming({ clean_titles: event.target.checked });
+          }}
+        />
+        Clean up messy titles (strip “(Official Video)”, extra spaces, …)
+      </label>
 
       <div className="settings-header settings-subsection">
         <div>

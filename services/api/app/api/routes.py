@@ -27,6 +27,7 @@ from .schemas import (
     CollectionRenameRequest,
     CollectionResponse,
     DownloadCreateRequest,
+    DownloadHistoryResponse,
     DownloadPresetCreateRequest,
     DownloadPresetResponse,
     DownloadResponse,
@@ -55,7 +56,7 @@ from ..core.platform import DirectoryPickerUnavailable, browse_for_directory, op
 from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
 from ..infrastructure.storage import scan_storage
 from ..infrastructure.updates import check_yt_dlp_update
-from ..core.settings_store import clear_download_directory, save_download_directory
+from ..core.settings_store import clear_download_directory, save_download_directory, save_setting
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
 from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
@@ -227,6 +228,33 @@ async def list_downloads(request: Request) -> list[DownloadResponse]:
     return [to_response(job) for job in jobs]
 
 
+# How many finished downloads the live snapshot carries alongside the active
+# ones. Older history is paged in on demand via /downloads/history, so the SSE
+# payload stays bounded no matter how long the queue's history grows.
+_SNAPSHOT_TERMINAL_LIMIT = 40
+# Page size cap for history requests.
+_HISTORY_MAX_LIMIT = 100
+
+
+@router.get('/downloads/history', response_model=DownloadHistoryResponse)
+async def download_history(
+    request: Request,
+    limit: int = Query(default=40, ge=1, le=_HISTORY_MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+) -> DownloadHistoryResponse:
+    """A page of finished downloads (history), newest-first. The live view
+    already holds the active + most recent jobs from the SSE snapshot; this
+    is how the UI reaches older ones without shipping them all on every
+    snapshot."""
+    # Fetch one extra to tell whether there's another page, without a count.
+    jobs = await request.app.state.repository.list_terminal_page(limit + 1, offset)
+    has_more = len(jobs) > limit
+    return DownloadHistoryResponse(
+        items=[to_response(job) for job in jobs[:limit]],
+        has_more=has_more,
+    )
+
+
 @router.post('/downloads', response_model=DownloadResponse, status_code=status.HTTP_201_CREATED)
 async def create_download(payload: DownloadCreateRequest, request: Request) -> DownloadResponse:
     queue = request.app.state.queue
@@ -267,6 +295,25 @@ async def cancel_download(job_id: str, request: Request) -> DownloadResponse:
 async def retry_download(job_id: str, request: Request) -> DownloadResponse:
     try:
         job = await request.app.state.queue.retry(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail='Download not found')
+    return to_response(job)
+
+
+@router.post('/downloads/{job_id}/pause', response_model=DownloadResponse)
+async def pause_download(job_id: str, request: Request) -> DownloadResponse:
+    job = await request.app.state.queue.pause(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail='Download not found')
+    return to_response(job)
+
+
+@router.post('/downloads/{job_id}/resume', response_model=DownloadResponse)
+async def resume_download(job_id: str, request: Request) -> DownloadResponse:
+    try:
+        job = await request.app.state.queue.resume(job_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if job is None:
@@ -434,6 +481,14 @@ _EVENT_HEARTBEAT_SECONDS = 15.0
 _EVENT_MIN_INTERVAL_SECONDS = 0.4
 
 
+async def _snapshot_downloads(request: Request) -> list[DownloadResponse]:
+    """The bounded download list for the SSE snapshot: all active jobs plus
+    the most recent finished ones. Keeps the pushed payload from growing with
+    history -- older jobs are reached via /downloads/history."""
+    jobs = await request.app.state.repository.list_recent(_SNAPSHOT_TERMINAL_LIMIT)
+    return [to_response(job) for job in jobs]
+
+
 async def _event_snapshot(request: Request) -> dict:
     """Everything the PWA's old refresh loop fetched, in one payload.
 
@@ -441,7 +496,7 @@ async def _event_snapshot(request: Request) -> dict:
     than re-querying, so the two can never disagree.
     """
     downloads, system, captures, settings_payload, collections = await asyncio.gather(
-        list_downloads(request),
+        _snapshot_downloads(request),
         system_status(request),
         list_captures(request),
         get_settings_route(request),
@@ -513,14 +568,19 @@ async def events(request: Request) -> StreamingResponse:
     )
 
 
-@router.get('/settings', response_model=SettingsResponse)
-async def get_settings_route(request: Request) -> SettingsResponse:
+def _settings_response(request: Request) -> SettingsResponse:
     settings = request.app.state.settings
-    default_directory = request.app.state.default_download_directory
     return SettingsResponse(
         download_directory=str(settings.download_directory),
-        default_download_directory=str(default_directory),
+        default_download_directory=str(request.app.state.default_download_directory),
+        filename_template=settings.filename_template,
+        clean_titles=settings.clean_titles,
     )
+
+
+@router.get('/settings', response_model=SettingsResponse)
+async def get_settings_route(request: Request) -> SettingsResponse:
+    return _settings_response(request)
 
 
 @router.put('/settings', response_model=SettingsResponse)
@@ -534,10 +594,17 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request) -> S
     settings.download_directory = directory
     request.app.state.captured_media.download_directory = directory
     save_download_directory(settings.database_path, directory)
-    return SettingsResponse(
-        download_directory=str(directory),
-        default_download_directory=str(request.app.state.default_download_directory),
-    )
+
+    # Output-naming preferences are optional in the same request; apply and
+    # persist only what was provided.
+    if payload.filename_template is not None:
+        settings.filename_template = payload.filename_template
+        save_setting(settings.database_path, 'filename_template', payload.filename_template)
+    if payload.clean_titles is not None:
+        settings.clean_titles = payload.clean_titles
+        save_setting(settings.database_path, 'clean_titles', payload.clean_titles)
+
+    return _settings_response(request)
 
 
 @router.post('/settings/reset-download-directory', response_model=SettingsResponse)
@@ -548,10 +615,7 @@ async def reset_download_directory(request: Request) -> SettingsResponse:
     request.app.state.settings.download_directory = directory
     request.app.state.captured_media.download_directory = directory
     clear_download_directory(settings.database_path)
-    return SettingsResponse(
-        download_directory=str(directory),
-        default_download_directory=str(request.app.state.default_download_directory),
-    )
+    return _settings_response(request)
 
 
 @router.post('/settings/open-download-directory')

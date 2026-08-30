@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, EVENTS_URL } from './api/client';
 import { DownloadForm } from './components/DownloadForm';
 import { DownloadList } from './components/DownloadList';
@@ -30,6 +30,12 @@ function sameJson(a: unknown, b: unknown): boolean {
 
 export default function App() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  // Older finished downloads loaded on demand from /downloads/history. The SSE
+  // snapshot only carries active + recent jobs (bounded payload), so these
+  // fill in the tail when the user asks for it.
+  const [olderHistory, setOlderHistory] = useState<DownloadItem[]>([]);
+  const [historyHasMore, setHistoryHasMore] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [captures, setCaptures] = useState<CaptureItem[]>([]);
   // Collection summaries (counts, not items) live here rather than inside the
   // Instagram panel so the SSE snapshot can keep them live -- an item
@@ -282,6 +288,32 @@ export default function App() {
     }
   }
 
+  // The live snapshot (active + recent) merged with any older history the
+  // user has loaded. Live wins on id collision, so a job that was terminal in
+  // history but has just been retried shows its current active state.
+  const mergedDownloads = useMemo(() => {
+    const byId = new Map<string, DownloadItem>();
+    for (const item of olderHistory) byId.set(item.id, item);
+    for (const item of downloads) byId.set(item.id, item);
+    return Array.from(byId.values()).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  }, [downloads, olderHistory]);
+
+  async function loadOlderDownloads() {
+    setLoadingOlder(true);
+    try {
+      const page = await api.downloadHistory({ offset: olderHistory.length, limit: 40 });
+      setOlderHistory((current) => {
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...page.items.filter((item) => !seen.has(item.id))];
+      });
+      setHistoryHasMore(page.has_more);
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load older downloads');
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
   function finishWizard() {
     try { localStorage.setItem(SETUP_STORAGE_KEY, '1'); } catch { /* ignore */ }
     setShowWizard(false);
@@ -326,12 +358,12 @@ export default function App() {
     }
   }
 
-  async function saveSettings(path: string) {
+  async function saveSettings(path: string, naming?: import('./types/api').SettingsNamingUpdate) {
     setSettingsBusy(true);
     try {
-      const next = await api.updateSettings(path);
+      const next = await api.updateSettings(path, naming ?? {});
       setSettings(next);
-      setMessage('Download location updated.');
+      setMessage(naming ? 'Settings updated.' : 'Download location updated.');
       return next;
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : 'Unable to update download location');
@@ -536,8 +568,17 @@ export default function App() {
           </button>
         </div>
         <DownloadList
-          items={downloads}
+          items={mergedDownloads}
+          hasMoreHistory={historyHasMore}
+          loadingOlder={loadingOlder}
+          onLoadOlder={loadOlderDownloads}
           onCancel={async (id) => { await api.cancelDownload(id); await refresh(); }}
+          onPause={async (id) => {
+            try { await api.pauseDownload(id); } catch (error: unknown) { setMessage(error instanceof Error ? error.message : 'Unable to pause download'); } finally { await refresh(); }
+          }}
+          onResume={async (id) => {
+            try { await api.resumeDownload(id); setMessage('Resuming download…'); } catch (error: unknown) { setMessage(error instanceof Error ? error.message : 'Unable to resume download'); } finally { await refresh(); }
+          }}
           onRetry={async (id) => {
             try {
               await api.retryDownload(id);
@@ -550,6 +591,7 @@ export default function App() {
           }}
           onDelete={async (id) => {
             setDownloads((current) => current.filter((item) => item.id !== id));
+            setOlderHistory((current) => current.filter((item) => item.id !== id));
             try {
               await api.deleteDownload(id);
             } catch (error: unknown) {

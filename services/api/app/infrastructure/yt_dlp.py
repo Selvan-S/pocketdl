@@ -18,7 +18,7 @@ from ..application.downloads.strategy import (
     should_retry_without_cert_verification,
     without_cert_verification,
 )
-from ..core.config import Settings
+from ..core.config import DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATES, Settings
 from ..core.filenames import sanitize_filename, unique_stem
 from ..domain.analyzer import MediaAnalysis, parse_media_analysis
 from ..domain.models import ConflictStrategy, DownloadEngine, DownloadJob, DownloadStatus, DownloadSourceType, MediaOptions, RequestContext
@@ -166,7 +166,28 @@ class YtDlpService:
             if conflict_strategy is ConflictStrategy.RENAME:
                 stem = unique_stem(directory, stem)
             return str(directory / f'{stem}.%(ext)s')
-        return str(directory / '%(title)s.%(ext)s')
+        # No explicit filename: use the configured naming pattern. The client
+        # only ever chooses a key from a fixed map, never raw template syntax.
+        pattern = FILENAME_TEMPLATES.get(self.settings.filename_template, FILENAME_TEMPLATES[DEFAULT_FILENAME_TEMPLATE])
+        return str(directory / f'{pattern}.%(ext)s')
+
+    # Bracketed marketing noise commonly stuck on titles. Removed from the
+    # title metadata (so it's out of the filename) when clean_titles is on.
+    # Conservative: only clearly-promotional tags, and only affects the
+    # filename/embedded title, never the stored DB record.
+    _TITLE_NOISE_PATTERN = (
+        r'(?i)\s*[\(\[](?:official\s+)?(?:music\s+)?'
+        r'(?:video|audio|lyrics?|lyric video|visualizer|mv|hd|4k|full album|official)[\)\]]'
+    )
+
+    def _title_cleanup_args(self) -> list[str]:
+        if not self.settings.clean_titles:
+            return []
+        return [
+            '--replace-in-metadata', 'title', self._TITLE_NOISE_PATTERN, '',
+            # Collapse the double spaces a removal can leave behind.
+            '--replace-in-metadata', 'title', r'\s{2,}', ' ',
+        ]
 
     @staticmethod
     def _conflict_args(conflict_strategy: ConflictStrategy) -> list[str]:
@@ -227,6 +248,7 @@ class YtDlpService:
             *format_args(preset, format_id),
         ]
         args += self._conflict_args(media_options.conflict_strategy)
+        args += self._title_cleanup_args()
         args += self._subtitle_args(preset, media_options)
         # Prefer a particular audio-track language when the source has several.
         # -S sorting, not a filter: a single-track source is unaffected.

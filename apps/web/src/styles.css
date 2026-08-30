@@ -53,10 +53,11 @@ button.secondary { background: transparent; border: 1px solid #2a3652; color: #d
 .status.running { color: #d8e1ff; }
 .status.completed { color: #a4eab9; }
 .status.failed { color: #ffb2b2; }
+.status.paused { color: #ffce8a; }
 .progress-track { height: 7px; background: #1b243a; border-radius: 99px; margin: 14px 0 8px; overflow: hidden; }
 .progress { height: 100%; background: #dce6ff; border-radius: 99px; transition: width .3s ease; }
 .download-meta { display:flex; flex-wrap:wrap; gap: 12px; color: #8090ae; font-size: 11px; }
-.actions { display:flex; justify-content:flex-end; margin-top: 10px; }
+.actions { display:flex; justify-content:flex-end; gap: 8px; margin-top: 10px; }
 .actions button { min-height: 44px; padding: 0 14px; font-size: 12px; background: transparent; border: 1px solid #2a3652; color: #ccd6e9; }
 .error { margin-top: 10px; color: #ff9c9c; font-size: 12px; white-space: pre-wrap; }
 .error.rate-limited { color: #ffce8a; }

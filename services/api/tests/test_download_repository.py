@@ -111,3 +111,57 @@ async def test_initialize_migrates_a_pre_engine_database_and_is_idempotent(tmp_p
     assert legacy is not None
     assert legacy.engine is DownloadEngine.YT_DLP
     assert legacy.collection_item_id is None
+
+
+# --- Round 4: bounded live snapshot + paged history ---
+
+async def _seed_mixed(repository) -> None:
+    """Two active jobs and five finished ones, with distinct created_at so
+    ordering is deterministic."""
+    base = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    from datetime import timedelta
+    specs = [
+        ('run-1', DownloadStatus.RUNNING), ('queue-1', DownloadStatus.QUEUED),
+        ('done-1', DownloadStatus.COMPLETED), ('done-2', DownloadStatus.COMPLETED),
+        ('fail-1', DownloadStatus.FAILED), ('cancel-1', DownloadStatus.CANCELLED),
+        ('done-3', DownloadStatus.COMPLETED),
+    ]
+    for index, (job_id, status) in enumerate(specs):
+        job = build_job(job_id)
+        job.status = status
+        job.created_at = base + timedelta(minutes=index)
+        await repository.add(job)
+
+
+@pytest.mark.asyncio
+async def test_list_recent_keeps_all_active_and_caps_terminal(tmp_path) -> None:
+    repository = SqliteDownloadRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await _seed_mixed(repository)
+
+    recent = await repository.list_recent(terminal_limit=2)
+    ids = [job.id for job in recent]
+
+    # Both active jobs are present regardless of the terminal cap.
+    assert 'run-1' in ids and 'queue-1' in ids
+    # Only the 2 newest terminal jobs (done-3 newest, then cancel-1).
+    terminal_ids = [i for i in ids if i not in {'run-1', 'queue-1'}]
+    assert terminal_ids == ['done-3', 'cancel-1']
+    # Newest-first overall.
+    assert recent == sorted(recent, key=lambda job: job.created_at, reverse=True)
+
+
+@pytest.mark.asyncio
+async def test_list_terminal_page_pages_history_newest_first(tmp_path) -> None:
+    repository = SqliteDownloadRepository(tmp_path / 'pocketdl.db')
+    await repository.initialize()
+    await _seed_mixed(repository)
+
+    page1 = await repository.list_terminal_page(limit=2, offset=0)
+    page2 = await repository.list_terminal_page(limit=2, offset=2)
+
+    assert [job.id for job in page1] == ['done-3', 'cancel-1']
+    assert [job.id for job in page2] == ['fail-1', 'done-2']
+    # Active jobs never appear in history.
+    all_history = await repository.list_terminal_page(limit=100, offset=0)
+    assert 'run-1' not in {job.id for job in all_history}
