@@ -44,6 +44,7 @@ class Downloader(Protocol):
         media_options: MediaOptions,
         on_progress: ProgressCallback,
         subtitle_url: str | None,
+        output_subdir: str | None,
     ) -> DownloadJob: ...
 
     async def cancel(self, job_id: str) -> None: ...

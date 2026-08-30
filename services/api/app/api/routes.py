@@ -19,6 +19,8 @@ from .schemas import (
     CaptureResponse,
     CaptureVariantResponse,
     CollectionAddProfileItemsRequest,
+    CollectionAddUrlsRequest,
+    CollectionAddUrlsResponse,
     CollectionAddProfileItemsResponse,
     CollectionCreateRequest,
     CollectionDownloadRequest,
@@ -1060,6 +1062,24 @@ async def add_collection_item(collection_id: str, payload: CollectionItemAddRequ
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return collection_item_response(item)
+
+
+@router.post('/collections/{collection_id}/urls', response_model=CollectionAddUrlsResponse)
+async def add_urls_to_collection(collection_id: str, payload: CollectionAddUrlsRequest, request: Request) -> CollectionAddUrlsResponse:
+    """Add plain URLs to a generic playlist. De-duplicated by URL, so re-adding
+    the same links is a no-op."""
+    service: CollectionService = request.app.state.collection_service
+    if await service.get_collection(collection_id) is None:
+        raise HTTPException(status_code=404, detail='Collection not found.')
+    previews = [
+        ProfileItemPreview(
+            source_url=url, content_type='url', author_username=None,
+            profile_username=None, caption=None, thumbnail_url=None, external_id=None,
+        )
+        for url in payload.urls
+    ]
+    added, already_present = await service.add_items(collection_id, previews)
+    return CollectionAddUrlsResponse(added=added, already_present=already_present)
 
 
 @router.delete('/collections/{collection_id}/items/{item_id}')

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from ...domain.collections import Collection, CollectionItem, Platform, ProfileItemPreview
+from ...domain.collections import PLATFORM_FOLDERS, Collection, CollectionItem, Platform, ProfileItemPreview
 from ...domain.models import DownloadEngine, DownloadJob, RequestContext
 from ...domain.ports import CollectionRepository
 from ..downloads.service import QueueService
@@ -103,7 +103,10 @@ class CollectionService:
     @staticmethod
     def _default_title(item: CollectionItem) -> str:
         parts = [item.author_username, item.content_type, item.external_id]
-        return '_'.join(part for part in parts if part) or f'instagram-{item.id[:8]}'
+        # Generic items are plain URLs with no Instagram metadata; letting
+        # yt-dlp derive the title (filename=None) gives a far better name than
+        # a synthetic one, so return '' to signal "no forced title".
+        return '_'.join(part for part in parts if part)
 
     async def download_collection(
         self,
@@ -127,8 +130,16 @@ class CollectionService:
         # re-queueing them every time "Download all" is pressed again.
         items = [item for item in items if item.downloaded_job_id is None]
 
+        # Instagram collections download via instaloader (per-profile folders
+        # it manages itself). A generic collection is just URLs downloaded via
+        # yt-dlp, into <download dir>/<platform>/<playlist>/.
+        is_generic = collection.platform is Platform.GENERIC
+        engine = DownloadEngine.YT_DLP if is_generic else DownloadEngine.INSTALOADER
+        subdir = f'{PLATFORM_FOLDERS[Platform.GENERIC]}/{collection.name}' if is_generic else None
+
         jobs: list[DownloadJob] = []
         for item in items:
+            title = self._default_title(item)
             job = await self.queue.create(
                 url=item.source_url,
                 filename=None,
@@ -137,9 +148,10 @@ class CollectionService:
                 retries=retries,
                 use_aria2=False,
                 request_context=request_context,
-                title=self._default_title(item),
-                engine=DownloadEngine.INSTALOADER,
+                title=title or None,
+                engine=engine,
                 collection_item_id=item.id,
+                output_subdir=subdir,
             )
             jobs.append(job)
         return jobs

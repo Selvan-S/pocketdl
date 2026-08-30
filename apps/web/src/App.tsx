@@ -7,6 +7,7 @@ import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { StoragePanel } from './components/StoragePanel';
 import { SetupWizard } from './components/SetupWizard';
+import { GenericPlaylists } from './components/GenericPlaylists';
 import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, DownloadPreset, DownloadPresetCreateRequest, ServerStateEvent, SettingsResponse, SystemStatus, UpdateCheck } from './types/api';
 import {
   collectionsThatCompleted,
@@ -531,7 +532,7 @@ export default function App() {
           const badge = value === 'download'
             ? (status ? status.active_downloads + status.queued_downloads : 0)
             : value === 'captures' ? captures.length
-              : value === 'instagram' ? collections.length : 0;
+              : value === 'instagram' ? collections.filter((collection) => collection.platform === 'instagram').length : 0;
           return (
             <button
               key={value}
@@ -565,6 +566,15 @@ export default function App() {
           onDeletePreset={deletePreset}
         />
       </section>
+      )}
+
+      {tab === 'download' && (
+        <GenericPlaylists
+          collections={collections.filter((collection) => collection.platform === 'generic')}
+          onCollectionsChanged={refresh}
+          onMessage={setMessage}
+          onDownloadQueued={refresh}
+        />
       )}
 
       {tab === 'captures' && (
@@ -607,7 +617,7 @@ export default function App() {
           </div>
         </div>
         <InstagramPanel
-          collections={collections}
+          collections={collections.filter((collection) => collection.platform === 'instagram')}
           onCollectionsChanged={refresh}
           onMessage={setMessage}
           onDownloadQueued={refresh}

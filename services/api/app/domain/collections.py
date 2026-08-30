@@ -4,15 +4,25 @@ from enum import StrEnum
 
 
 class Platform(StrEnum):
-    """Site a collection's items were discovered from.
+    """Where a collection's items come from.
 
-    A single member today (Instagram is the Phase 5 pilot), but the field
-    exists on Collection/CollectionItem from the start so the same
-    save-a-selection-then-download-it flow generalizes to the next platform
-    without a schema change -- see docs/docs_POCKETDL_ROADMAP.md Phase 5.
+    INSTAGRAM: items discovered from a profile (downloaded via instaloader).
+    GENERIC: a user-curated list of plain URLs downloaded via yt-dlp, the
+    same as a paste-a-URL download -- the "playlist for normal downloads".
     """
 
     INSTAGRAM = 'instagram'
+    GENERIC = 'generic'
+
+
+# Top-level folder each platform's downloads are organised under, inside the
+# download directory: <download dir>/<platform folder>/<...>. Generic playlists
+# then nest a per-playlist folder beneath this (see CollectionService); the
+# Instagram path nests per-profile.
+PLATFORM_FOLDERS: dict[Platform, str] = {
+    Platform.INSTAGRAM: 'Instagram',
+    Platform.GENERIC: 'Web',
+}
 
 
 class InstagramContentType(StrEnum):
