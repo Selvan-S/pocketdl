@@ -65,3 +65,31 @@ def test_captured_ffmpeg_args_take_audio_from_the_single_input_when_muxed() -> N
     assert args.count('-i') == 1
     assert '0:a:0?' in args
     assert '1:a:0?' not in args
+
+
+# --- Brotli fix: force identity, drop the browser's accept-encoding ---
+
+def test_headers_block_forces_identity_encoding() -> None:
+    """The captured browser Accept-Encoding (gzip, deflate, br) makes servers
+    return brotli, which ffmpeg's HTTP client can't decode ("Unknown content
+    coding: br"). We drop it and ask for identity instead."""
+    from app.domain.models import RequestContext
+
+    block = CapturedMediaService._headers_block(
+        RequestContext(headers={'Accept-Encoding': 'gzip, deflate, br, zstd', 'X-Keep': 'yes'})
+    )
+
+    assert 'Accept-Encoding: identity\r\n' in block
+    assert 'br' not in block
+    assert 'zstd' not in block
+    # Non-encoding headers are still forwarded.
+    assert 'X-Keep: yes\r\n' in block
+
+
+def test_headers_block_adds_identity_even_without_a_captured_one() -> None:
+    from app.domain.models import RequestContext
+
+    block = CapturedMediaService._headers_block(RequestContext(referer='https://site.example/'))
+
+    assert 'Accept-Encoding: identity\r\n' in block
+    assert 'Referer: https://site.example/\r\n' in block
