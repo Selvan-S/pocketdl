@@ -83,6 +83,7 @@ export const api = {
   pauseDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/pause`, { method: 'POST' }),
   resumeDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/resume`, { method: 'POST' }),
   deleteDownload: (id: string) => request<{ ok: true }>(`/downloads/${id}`, { method: 'DELETE' }),
+  clearCompletedDownloads: () => request<{ removed: number }>('/downloads/clear-completed', { method: 'POST' }),
   status: () => request<SystemStatus>('/system/status'),
   storage: () => request<StorageUsage>('/storage'),
   exportData: () => request<unknown>('/export'),

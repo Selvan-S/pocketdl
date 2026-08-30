@@ -321,6 +321,21 @@ async def resume_download(job_id: str, request: Request) -> DownloadResponse:
     return to_response(job)
 
 
+@router.post('/downloads/clear-completed')
+async def clear_completed_downloads(request: Request) -> dict[str, int]:
+    """Remove every COMPLETED download at once. Deliberately leaves failed and
+    cancelled ones -- those may still be retried."""
+    repository = request.app.state.repository
+    queue = request.app.state.queue
+    removed = 0
+    for job in await repository.list():
+        if job.status is DownloadStatus.COMPLETED:
+            await repository.delete(job.id)
+            queue.forget(job.id)
+            removed += 1
+    return {'removed': removed}
+
+
 @router.delete('/downloads/{job_id}')
 async def delete_download(job_id: str, request: Request) -> dict[str, bool]:
     job = await request.app.state.repository.get(job_id)

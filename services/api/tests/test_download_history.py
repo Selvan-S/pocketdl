@@ -38,3 +38,18 @@ async def test_history_endpoint_pages_newest_first(api_client) -> None:
 
     everything = (await api_client.get('/api/downloads/history?limit=100')).json()
     assert 'running' not in {item['id'] for item in everything['items']}
+
+
+@pytest.mark.asyncio
+async def test_clear_completed_removes_only_completed(api_client) -> None:
+    repository = SqliteDownloadRepository(api_client.app_settings.database_path)
+    await repository.add(_job('done-1', DownloadStatus.COMPLETED, 1))
+    await repository.add(_job('done-2', DownloadStatus.COMPLETED, 2))
+    await repository.add(_job('failed-1', DownloadStatus.FAILED, 3))
+    await repository.add(_job('running-1', DownloadStatus.RUNNING, 4))
+
+    result = (await api_client.post('/api/downloads/clear-completed')).json()
+    assert result['removed'] == 2
+
+    remaining = {item['id'] for item in (await api_client.get('/api/downloads')).json()}
+    assert remaining == {'failed-1', 'running-1'}
