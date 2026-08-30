@@ -326,6 +326,16 @@ export default function App() {
         <DownloadList
           items={downloads}
           onCancel={async (id) => { await api.cancelDownload(id); await refresh(); }}
+          onRetry={async (id) => {
+            try {
+              await api.retryDownload(id);
+              setMessage('Retrying download…');
+            } catch (error: unknown) {
+              setMessage(error instanceof Error ? error.message : 'Unable to retry download');
+            } finally {
+              await refresh();
+            }
+          }}
           onDelete={async (id) => {
             setDownloads((current) => current.filter((item) => item.id !== id));
             try {

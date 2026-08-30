@@ -40,9 +40,10 @@ function formatSpeed(value: number | null): string {
   return value == null ? '—' : `${formatBytes(value)}/s`;
 }
 
-export function DownloadList({ items, onCancel, onDelete }: {
+export function DownloadList({ items, onCancel, onRetry, onDelete }: {
   items: DownloadItem[];
   onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [tab, setTab] = useState<DownloadTab>('all');
@@ -112,6 +113,7 @@ export function DownloadList({ items, onCancel, onDelete }: {
           )}
           <div className="actions">
             {(item.status === 'queued' || item.status === 'running') && <button onClick={() => onCancel(item.id)}>Cancel</button>}
+            {(item.status === 'failed' || item.status === 'cancelled') && <button onClick={() => onRetry(item.id)}>Retry</button>}
             {(item.status === 'failed' || item.status === 'completed' || item.status === 'cancelled') && <button onClick={() => onDelete(item.id)}>Remove</button>}
           </div>
         </article>

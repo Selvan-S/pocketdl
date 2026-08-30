@@ -10,6 +10,11 @@ from ...domain.models import DownloadEngine, DownloadJob, DownloadSourceType, Do
 from ...domain.ports import CaptureRepository, CollectionRepository, DownloadRepository, Downloader
 
 
+# The terminal states a download can be retried from. A running/queued job
+# is already in flight; a completed one has nothing to redo.
+_RETRYABLE_STATUSES = {DownloadStatus.FAILED, DownloadStatus.CANCELLED}
+
+
 @dataclass(frozen=True, slots=True)
 class JobOptions:
     """Per-job downloader settings held until the queued job actually runs."""
@@ -174,8 +179,17 @@ class QueueService:
                 await self.repository.update(job)
         finally:
             self.tasks.pop(job_id, None)
-            self.contexts.pop(job_id, None)
-            self.options.pop(job_id, None)
+            # Keep a job's context and options iff it ended FAILED or
+            # CANCELLED, so it can be retried -- and, for yt-dlp, resume its
+            # partial .part file, which survives on disk. A COMPLETED job
+            # never needs them again, so those are dropped, bounding retention
+            # to the small set of retryable jobs. delete() -> forget() clears
+            # the rest. (Retry state is in-memory only: a backend restart
+            # loses it, same as the queue's running tasks.)
+            final = await self.repository.get(job_id)
+            if final is None or final.status not in _RETRYABLE_STATUSES:
+                self.contexts.pop(job_id, None)
+                self.options.pop(job_id, None)
 
     async def cancel(self, job_id: str) -> DownloadJob | None:
         job = await self.repository.get(job_id)
@@ -187,6 +201,50 @@ class QueueService:
             await self.repository.update(job)
             await self.downloader.cancel(job_id)
         return job
+
+    async def retry(self, job_id: str) -> DownloadJob | None:
+        """Re-queue a failed or cancelled job with its original options.
+
+        For a standard (yt-dlp) job this resumes the partial download rather
+        than starting over: yt-dlp's `--continue` is on by default and the
+        output template is unchanged, so it picks up the `.part` file left on
+        disk. Captured (ffmpeg) jobs restart, since ffmpeg has no equivalent.
+
+        Raises ValueError (surfaced as 409) when the job is not in a
+        retryable state, or when its retry state is gone -- options and
+        context live only in memory, so a job cannot be retried after a
+        backend restart; re-adding it is the path then.
+        """
+        job = await self.repository.get(job_id)
+        if job is None:
+            return None
+        if job.status not in _RETRYABLE_STATUSES:
+            raise ValueError('Only a failed or cancelled download can be retried.')
+        if job_id not in self.options or job_id not in self.contexts:
+            raise ValueError('This download can no longer be retried; re-add it instead.')
+
+        job.status = DownloadStatus.QUEUED
+        job.error = None
+        job.error_details = None
+        job.error_category = None
+        job.exit_code = None
+        job.progress = 0.0
+        job.downloaded_bytes = 0
+        job.speed_bytes = None
+        job.eta_seconds = None
+        job.started_at = None
+        job.finished_at = None
+        await self.repository.update(job)
+        self.tasks[job_id] = asyncio.create_task(self._run(job_id))
+        if self._on_change is not None:
+            self._on_change()
+        return job
+
+    def forget(self, job_id: str) -> None:
+        """Drop retained retry state for a job being deleted, so the option
+        and context maps don't hold rows for downloads that no longer exist."""
+        self.contexts.pop(job_id, None)
+        self.options.pop(job_id, None)
 
     async def shutdown(self) -> None:
         for task in self.tasks.values():

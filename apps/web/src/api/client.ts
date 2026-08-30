@@ -64,6 +64,7 @@ export const api = {
   createDownload: (payload: DownloadCreateRequest) => request<DownloadItem>('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   analyze: (payload: Pick<DownloadCreateRequest, 'url' | 'request_context'>) => request<AnalyzeResponse>('/analyze', { method: 'POST', body: JSON.stringify(payload) }),
   cancelDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/cancel`, { method: 'POST' }),
+  retryDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/retry`, { method: 'POST' }),
   deleteDownload: (id: string) => request<{ ok: true }>(`/downloads/${id}`, { method: 'DELETE' }),
   status: () => request<SystemStatus>('/system/status'),
   updateYtDlp: () => request<{ ok: true; version: string | null }>('/system/update/yt-dlp', { method: 'POST' }),
