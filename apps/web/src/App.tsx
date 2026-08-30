@@ -5,7 +5,7 @@ import { DownloadList } from './components/DownloadList';
 import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
-import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
+import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, DownloadPreset, DownloadPresetCreateRequest, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
 import {
   collectionsThatCompleted,
   completionMap,
@@ -47,6 +47,7 @@ export default function App() {
   const [updating, setUpdating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [presets, setPresets] = useState<DownloadPreset[]>([]);
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === 'on';
@@ -231,6 +232,38 @@ export default function App() {
     setMessage('You’ll be notified when downloads finish.');
   }
 
+  // Presets change only on an explicit user action, so they are fetched on
+  // mount and re-fetched after a save/delete rather than riding the 2s poll
+  // or the SSE snapshot.
+  const refreshPresets = useCallback(async () => {
+    try {
+      setPresets(await api.listPresets());
+    } catch {
+      // Non-critical: the form just won't offer saved presets this session.
+    }
+  }, []);
+
+  useEffect(() => { void refreshPresets(); }, [refreshPresets]);
+
+  async function savePreset(payload: DownloadPresetCreateRequest) {
+    try {
+      await api.createPreset(payload);
+      setMessage(`Saved preset “${payload.name}”.`);
+      await refreshPresets();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to save preset');
+    }
+  }
+
+  async function deletePreset(id: string) {
+    try {
+      await api.deletePreset(id);
+      await refreshPresets();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to delete preset');
+    }
+  }
+
   async function addDownload(payload: DownloadCreateRequest) {
     await api.createDownload(payload);
     setMessage('Added to queue.');
@@ -356,6 +389,9 @@ export default function App() {
           onSubmit={addDownload}
           onSubmitBatch={addDownloadBatch}
           onAnalyze={(payload): Promise<AnalyzeResponse> => api.analyze(payload)}
+          presets={presets}
+          onSavePreset={savePreset}
+          onDeletePreset={deletePreset}
         />
         {message && <div className="message" role="status">{message}</div>}
       </section>

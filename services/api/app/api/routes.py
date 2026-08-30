@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import uuid
+from datetime import datetime, timezone
 
 from typing import Literal
 
@@ -25,6 +27,8 @@ from .schemas import (
     CollectionRenameRequest,
     CollectionResponse,
     DownloadCreateRequest,
+    DownloadPresetCreateRequest,
+    DownloadPresetResponse,
     DownloadResponse,
     InstagramProfilePreviewRequest,
     InstagramProfilePreviewResponse,
@@ -45,6 +49,7 @@ from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
 from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
 from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
+from ..domain.presets import DownloadPreset
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api')
@@ -259,6 +264,47 @@ async def delete_download(job_id: str, request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=409, detail='Cancel the download before removing it')
     await request.app.state.repository.delete(job_id)
     request.app.state.queue.forget(job_id)
+    return {'ok': True}
+
+
+def preset_response(preset: DownloadPreset) -> DownloadPresetResponse:
+    return DownloadPresetResponse(
+        id=preset.id,
+        name=preset.name,
+        preset=preset.preset,
+        concurrent_fragments=preset.concurrent_fragments,
+        retries=preset.retries,
+        use_aria2=preset.use_aria2,
+        created_at=preset.created_at,
+    )
+
+
+@router.get('/presets', response_model=list[DownloadPresetResponse])
+async def list_presets(request: Request) -> list[DownloadPresetResponse]:
+    presets = await request.app.state.preset_repository.list()
+    return [preset_response(preset) for preset in presets]
+
+
+@router.post('/presets', response_model=DownloadPresetResponse, status_code=status.HTTP_201_CREATED)
+async def create_preset(payload: DownloadPresetCreateRequest, request: Request) -> DownloadPresetResponse:
+    preset = DownloadPreset(
+        id=uuid.uuid4().hex,
+        name=payload.name.strip()[:100],
+        preset=payload.preset,
+        concurrent_fragments=payload.concurrent_fragments,
+        retries=payload.retries,
+        use_aria2=payload.use_aria2,
+        created_at=datetime.now(timezone.utc),
+    )
+    await request.app.state.preset_repository.add(preset)
+    return preset_response(preset)
+
+
+@router.delete('/presets/{preset_id}')
+async def delete_preset(preset_id: str, request: Request) -> dict[str, bool]:
+    if await request.app.state.preset_repository.get(preset_id) is None:
+        raise HTTPException(status_code=404, detail='Preset not found')
+    await request.app.state.preset_repository.delete(preset_id)
     return {'ok': True}
 
 

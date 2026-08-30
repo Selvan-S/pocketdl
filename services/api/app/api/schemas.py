@@ -390,6 +390,24 @@ class CollectionItemResponse(BaseModel):
     downloaded_job_id: str | None
 
 
+class DownloadPresetCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    preset: Literal['best', '1080p', '720p', '480p', 'audio'] = 'best'
+    concurrent_fragments: int = Field(default=8, ge=1, le=32)
+    retries: int = Field(default=10, ge=1, le=100)
+    use_aria2: bool = False
+
+
+class DownloadPresetResponse(BaseModel):
+    id: str
+    name: str
+    preset: str
+    concurrent_fragments: int
+    retries: int
+    use_aria2: bool
+    created_at: datetime
+
+
 class CollectionDownloadRequest(BaseModel):
     item_ids: list[str] | None = None
     preset: Literal['best', '1080p', '720p', 'audio'] = 'best'

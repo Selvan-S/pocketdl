@@ -249,6 +249,24 @@ export interface CollectionDownloadRequest {
   retries?: number;
 }
 
+export interface DownloadPreset {
+  id: string;
+  name: string;
+  preset: NonNullable<DownloadCreateRequest['preset']>;
+  concurrent_fragments: number;
+  retries: number;
+  use_aria2: boolean;
+  created_at: string;
+}
+
+export interface DownloadPresetCreateRequest {
+  name: string;
+  preset: NonNullable<DownloadCreateRequest['preset']>;
+  concurrent_fragments: number;
+  retries: number;
+  use_aria2: boolean;
+}
+
 /** One `state` frame from GET /api/events -- everything the old 2s refresh
  * loop used to fetch from four separate endpoints. A field is null when the
  * server could not build that part, which must not blank out what the UI is
