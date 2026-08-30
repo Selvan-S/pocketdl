@@ -440,6 +440,13 @@ class YtDlpService:
             job.title = title_match.group(1)
 
     async def cancel(self, job_id: str) -> None:
+        # A captured (HLS/DASH) download runs its ffmpeg process inside
+        # CapturedMediaService, whose processes are NOT in self._processes.
+        # Without this delegation, cancelling/pausing a captured job never
+        # stopped ffmpeg -- it kept running and its progress callbacks wrote
+        # the status back to RUNNING, so a pause looked like it auto-resumed.
+        await self.captured_media.cancel(job_id)
+
         process = self._processes.get(job_id)
         if process is None:
             return
