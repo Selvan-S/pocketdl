@@ -358,12 +358,12 @@ export default function App() {
     }
   }
 
-  async function saveSettings(path: string) {
+  async function saveSettings(path: string, naming?: import('./types/api').SettingsNamingUpdate) {
     setSettingsBusy(true);
     try {
-      const next = await api.updateSettings(path);
+      const next = await api.updateSettings(path, naming ?? {});
       setSettings(next);
-      setMessage('Download location updated.');
+      setMessage(naming ? 'Settings updated.' : 'Download location updated.');
       return next;
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : 'Unable to update download location');

@@ -19,6 +19,7 @@ import type {
   InstagramProfilePreviewResponse,
   InstagramSessionStatus,
   ProfileItemPreview,
+  SettingsNamingUpdate,
   SettingsResponse,
   StorageUsage,
   SystemStatus,
@@ -95,7 +96,8 @@ export const api = {
   downloadCapture: (id: string, payload: CaptureDownloadRequest) => request<DownloadItem>(`/captures/${id}/download`, { method: 'POST', body: JSON.stringify(payload) }),
   deleteCapture: (id: string) => request<{ ok: true }>(`/captures/${id}`, { method: 'DELETE' }),
   settings: () => request<SettingsResponse>('/settings'),
-  updateSettings: (downloadDirectory: string) => request<SettingsResponse>('/settings', { method: 'PUT', body: JSON.stringify({ download_directory: downloadDirectory }) }),
+  updateSettings: (downloadDirectory: string, naming: SettingsNamingUpdate = {}) =>
+    request<SettingsResponse>('/settings', { method: 'PUT', body: JSON.stringify({ download_directory: downloadDirectory, ...naming }) }),
   resetDownloadDirectory: () => request<SettingsResponse>('/settings/reset-download-directory', { method: 'POST' }),
   openDownloadDirectory: () => request<{ ok: true; download_directory: string }>('/settings/open-download-directory', { method: 'POST' }),
   browseDownloadDirectory: () => request<BrowseDirectoryResponse>('/settings/browse-download-directory', { method: 'POST' }),

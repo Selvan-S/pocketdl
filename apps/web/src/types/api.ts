@@ -146,9 +146,18 @@ export interface CaptureDownloadRequest {
   variant_index?: number;
 }
 
+export type FilenameTemplate = 'title' | 'uploader-title' | 'date-title' | 'title-id';
+
 export interface SettingsResponse {
   download_directory: string;
   default_download_directory: string;
+  filename_template: FilenameTemplate;
+  clean_titles: boolean;
+}
+
+export interface SettingsNamingUpdate {
+  filename_template?: FilenameTemplate;
+  clean_titles?: boolean;
 }
 
 export interface BrowseDirectoryResponse {

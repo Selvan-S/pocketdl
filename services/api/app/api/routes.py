@@ -56,7 +56,7 @@ from ..core.platform import DirectoryPickerUnavailable, browse_for_directory, op
 from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
 from ..infrastructure.storage import scan_storage
 from ..infrastructure.updates import check_yt_dlp_update
-from ..core.settings_store import clear_download_directory, save_download_directory
+from ..core.settings_store import clear_download_directory, save_download_directory, save_setting
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
 from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
@@ -568,14 +568,19 @@ async def events(request: Request) -> StreamingResponse:
     )
 
 
-@router.get('/settings', response_model=SettingsResponse)
-async def get_settings_route(request: Request) -> SettingsResponse:
+def _settings_response(request: Request) -> SettingsResponse:
     settings = request.app.state.settings
-    default_directory = request.app.state.default_download_directory
     return SettingsResponse(
         download_directory=str(settings.download_directory),
-        default_download_directory=str(default_directory),
+        default_download_directory=str(request.app.state.default_download_directory),
+        filename_template=settings.filename_template,
+        clean_titles=settings.clean_titles,
     )
+
+
+@router.get('/settings', response_model=SettingsResponse)
+async def get_settings_route(request: Request) -> SettingsResponse:
+    return _settings_response(request)
 
 
 @router.put('/settings', response_model=SettingsResponse)
@@ -589,10 +594,17 @@ async def update_settings(payload: SettingsUpdateRequest, request: Request) -> S
     settings.download_directory = directory
     request.app.state.captured_media.download_directory = directory
     save_download_directory(settings.database_path, directory)
-    return SettingsResponse(
-        download_directory=str(directory),
-        default_download_directory=str(request.app.state.default_download_directory),
-    )
+
+    # Output-naming preferences are optional in the same request; apply and
+    # persist only what was provided.
+    if payload.filename_template is not None:
+        settings.filename_template = payload.filename_template
+        save_setting(settings.database_path, 'filename_template', payload.filename_template)
+    if payload.clean_titles is not None:
+        settings.clean_titles = payload.clean_titles
+        save_setting(settings.database_path, 'clean_titles', payload.clean_titles)
+
+    return _settings_response(request)
 
 
 @router.post('/settings/reset-download-directory', response_model=SettingsResponse)
@@ -603,10 +615,7 @@ async def reset_download_directory(request: Request) -> SettingsResponse:
     request.app.state.settings.download_directory = directory
     request.app.state.captured_media.download_directory = directory
     clear_download_directory(settings.database_path)
-    return SettingsResponse(
-        download_directory=str(directory),
-        default_download_directory=str(request.app.state.default_download_directory),
-    )
+    return _settings_response(request)
 
 
 @router.post('/settings/open-download-directory')
