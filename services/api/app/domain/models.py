@@ -36,6 +36,28 @@ class DownloadEngine(StrEnum):
     INSTALOADER = 'instaloader'
 
 
+@dataclass(frozen=True, slots=True)
+class MediaOptions:
+    """Optional per-download media choices that only apply to standard
+    (yt-dlp) downloads: subtitles and preferred audio-track language. Bundled
+    so they can ride the create/download chain as one value instead of a
+    growing list of scalars. Defaults are "no subtitles, no language
+    preference", i.e. today's behaviour, so captured/collection downloads
+    that never set them are unaffected.
+    """
+
+    subtitles: bool = False
+    # Comma-separated language codes (e.g. "en,es") or "all". Only used when
+    # subtitles is True.
+    subtitle_langs: str = 'en'
+    # Embed into the media container instead of writing a sidecar file.
+    embed_subtitles: bool = False
+    # Preferred audio-track language when a source offers several; maps to
+    # yt-dlp's format sorting rather than a hard filter, so a source with a
+    # single track is unaffected.
+    audio_language: str | None = None
+
+
 @dataclass(slots=True)
 class RequestContext:
     page_url: str | None = None

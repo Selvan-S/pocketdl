@@ -21,7 +21,7 @@ from ..application.downloads.strategy import (
 from ..core.config import Settings
 from ..core.filenames import sanitize_filename
 from ..domain.analyzer import MediaAnalysis, parse_media_analysis
-from ..domain.models import DownloadEngine, DownloadJob, DownloadStatus, DownloadSourceType, RequestContext
+from ..domain.models import DownloadEngine, DownloadJob, DownloadStatus, DownloadSourceType, MediaOptions, RequestContext
 from .ffmpeg import CapturedMediaService
 from .gallery_dl import GalleryDlService
 from .instaloader_service import InstaloaderService
@@ -168,6 +168,19 @@ class YtDlpService:
             return '\n'.join(dict.fromkeys(errors))
         return f'yt-dlp exited with code {return_code}.'
 
+    @staticmethod
+    def _subtitle_args(preset: str, media_options: MediaOptions) -> list[str]:
+        # Subtitles are meaningless for an audio-only extraction, and can't be
+        # embedded into an mp3 -- so skip them there entirely.
+        if not media_options.subtitles or preset == 'audio':
+            return []
+        args = ['--write-subs', '--write-auto-subs', '--sub-langs', media_options.subtitle_langs]
+        if media_options.embed_subtitles:
+            # Embed into the container; still keep the sidecar so nothing is
+            # lost if the muxer can't carry a given subtitle codec.
+            args.append('--embed-subs')
+        return args
+
     def _build_args(
         self,
         job: DownloadJob,
@@ -179,6 +192,7 @@ class YtDlpService:
         use_aria2: bool,
         request_context: RequestContext,
         attempt: DownloadAttempt,
+        media_options: MediaOptions = MediaOptions(),
     ) -> list[str]:
         args = [
             sys.executable,
@@ -195,6 +209,11 @@ class YtDlpService:
             self._output_template(job),
             *format_args(preset, format_id),
         ]
+        args += self._subtitle_args(preset, media_options)
+        # Prefer a particular audio-track language when the source has several.
+        # -S sorting, not a filter: a single-track source is unaffected.
+        if media_options.audio_language:
+            args += ['-S', f'lang:{media_options.audio_language}']
         args += self._context_args(request_context, impersonate=attempt.impersonate)
         if attempt.use_ffmpeg_hls:
             args += ['--downloader', 'ffmpeg', '--hls-use-mpegts']
@@ -239,6 +258,7 @@ class YtDlpService:
         on_progress: ProgressCallback,
         audio_url: str | None = None,
         collection_item_id: str | None = None,
+        media_options: MediaOptions = MediaOptions(),
     ) -> DownloadJob:
         if job.engine is DownloadEngine.GALLERY_DL:
             return await self.gallery_dl.download(
@@ -290,6 +310,7 @@ class YtDlpService:
                 use_aria2=use_aria2,
                 request_context=request_context,
                 attempt=attempt,
+                media_options=media_options,
             )
             return_code, lines = await self._run_process(job, args, on_progress)
             output = '\n'.join(lines)

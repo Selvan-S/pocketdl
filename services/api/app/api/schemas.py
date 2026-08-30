@@ -49,7 +49,29 @@ class DownloadCreateRequest(BaseModel):
     concurrent_fragments: int = Field(default=8, ge=1, le=32)
     retries: int = Field(default=10, ge=1, le=100)
     use_aria2: bool = False
+    # Subtitles / audio-track options. Only applied to standard (yt-dlp)
+    # downloads; ignored for captured sources.
+    subtitles: bool = False
+    subtitle_langs: str = Field(default='en', min_length=1, max_length=100)
+    embed_subtitles: bool = False
+    audio_language: str | None = Field(default=None, max_length=20)
     request_context: RequestContextRequest = Field(default_factory=RequestContextRequest)
+
+    @field_validator('subtitle_langs')
+    @classmethod
+    def validate_subtitle_langs(cls, value: str) -> str:
+        # "all" or a comma-separated list of language codes -- the same shape
+        # yt-dlp's --sub-langs accepts. Kept strict so it can't inject flags.
+        if value != 'all' and not re.fullmatch(r'[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?(?:,[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)*', value):
+            raise ValueError('subtitle_langs must be "all" or comma-separated language codes like "en,es".')
+        return value
+
+    @field_validator('audio_language')
+    @classmethod
+    def validate_audio_language(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r'[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?', value):
+            raise ValueError('audio_language must be a language code like "en" or "pt-BR".')
+        return value
 
     @field_validator('format_id')
     @classmethod

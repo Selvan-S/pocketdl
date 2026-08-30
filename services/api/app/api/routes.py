@@ -57,7 +57,7 @@ from ..core.settings_store import clear_download_directory, save_download_direct
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
 from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
-from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
+from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, MediaOptions, RequestContext
 from ..domain.presets import DownloadPreset
 
 logger = logging.getLogger(__name__)
@@ -229,6 +229,12 @@ async def list_downloads(request: Request) -> list[DownloadResponse]:
 async def create_download(payload: DownloadCreateRequest, request: Request) -> DownloadResponse:
     queue = request.app.state.queue
     context = _context(payload.request_context)
+    media_options = MediaOptions(
+        subtitles=payload.subtitles,
+        subtitle_langs=payload.subtitle_langs,
+        embed_subtitles=payload.embed_subtitles,
+        audio_language=payload.audio_language,
+    )
     try:
         job = await queue.create(
             str(payload.url),
@@ -239,6 +245,7 @@ async def create_download(payload: DownloadCreateRequest, request: Request) -> D
             payload.use_aria2,
             context,
             format_id=payload.format_id,
+            media_options=media_options,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
