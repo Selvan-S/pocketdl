@@ -6,11 +6,13 @@ interface Props {
   onSave: (path: string) => Promise<SettingsResponse>;
   onReset: () => Promise<SettingsResponse>;
   onOpen: () => Promise<void>;
+  onBrowse: () => Promise<string | null>;
   busy: boolean;
 }
 
-export function SettingsPanel({ value, onSave, onReset, onOpen, busy }: Props) {
+export function SettingsPanel({ value, onSave, onReset, onOpen, onBrowse, busy }: Props) {
   const [path, setPath] = useState('');
+  const [browsing, setBrowsing] = useState(false);
 
   useEffect(() => {
     setPath(value?.download_directory ?? '');
@@ -20,6 +22,16 @@ export function SettingsPanel({ value, onSave, onReset, onOpen, busy }: Props) {
     const next = path.trim();
     if (!next) return;
     await onSave(next);
+  }
+
+  async function browse() {
+    setBrowsing(true);
+    try {
+      const chosen = await onBrowse();
+      if (chosen) setPath(chosen);
+    } finally {
+      setBrowsing(false);
+    }
   }
 
   return (
@@ -43,6 +55,7 @@ export function SettingsPanel({ value, onSave, onReset, onOpen, busy }: Props) {
         Use an absolute path. On Termux, a path such as <code>/sdcard/Download/PocketDL</code> is valid.
       </div>
       <div className="settings-actions">
+        <button className="secondary" disabled={busy || browsing} onClick={() => void browse()}>{browsing ? 'Opening…' : 'Browse…'}</button>
         <button disabled={busy || !path.trim()} onClick={() => void save()}>{busy ? 'Saving…' : 'Save location'}</button>
         <button className="secondary" disabled={busy} onClick={() => void onOpen()}>Open folder</button>
         <button className="secondary" disabled={busy} onClick={() => void onReset()}>Reset default</button>

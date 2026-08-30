@@ -31,6 +31,13 @@ def test_classifies_unsupported_url() -> None:
     assert classify_download_error('ERROR: Unsupported URL') is DownloadErrorCategory.UNSUPPORTED_URL
 
 
+def test_classifies_gallery_dl_login_redirect() -> None:
+    # Observed live from a real gallery-dl run against an Instagram post
+    # without a valid session cookie: '[instagram][error] HTTP redirect to
+    # login page (https://www.instagram.com/accounts/login/)'.
+    assert classify_download_error('[instagram][error] HTTP redirect to login page (...)') is DownloadErrorCategory.AUTHENTICATION_REQUIRED
+
+
 def test_auto_impersonation_retry_only_for_hls_403() -> None:
     context = RequestContext(impersonation=ImpersonationMode.AUTO)
     assert should_retry_with_impersonation(

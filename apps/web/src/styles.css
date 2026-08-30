@@ -350,3 +350,97 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 }
 .quality-chip.selected span { color: #a8b8d8; }
 .capture-quality-note { margin-top: 8px; color: #74829d; font-size: 11px; }
+
+/* Instagram profile browser + playlists (Phase 5 pilot) */
+.instagram-panel { display: grid; gap: 18px; }
+.instagram-session { display: grid; gap: 10px; }
+.instagram-session-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.instagram-session-form { display: grid; gap: 8px; padding: 12px; border: 1px solid #202b44; background: #0c1323; border-radius: 12px; }
+.instagram-session-form textarea { min-height: 70px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.instagram-session-form button { justify-self: start; }
+
+.instagram-browser { display: grid; gap: 14px; }
+.instagram-browser-form { display: grid; gap: 10px; }
+.instagram-content-types { display: flex; flex-wrap: wrap; gap: 8px; }
+.instagram-date-range { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.instagram-date-range label { display: grid; gap: 4px; font-size: 12px; color: #8390a9; }
+.instagram-date-range .field-help { flex-basis: 100%; }
+.checkbox-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid #2a3652;
+  background: #0c1322;
+  color: #cfd8ea;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.checkbox-chip input { width: auto; min-height: 0; }
+
+.instagram-items-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.instagram-item-card {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  min-height: 0;
+  border-radius: 12px;
+  border: 1px solid #202b44;
+  background: #0f1627;
+  color: #cfd8ea;
+  font-weight: 400;
+  text-align: left;
+}
+.instagram-item-card.selected { border-color: #4c7dff; box-shadow: 0 0 0 1px #4c7dff inset; background: #131d33; }
+.instagram-item-card img, .instagram-item-placeholder { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #182036; }
+.instagram-item-type { font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: #9fc6ff; }
+.instagram-item-date { font-size: 11px; color: #7f8da8; }
+.instagram-item-caption { font-size: 11px; color: #8390a9; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* Header above the preview grid: how much is loaded, how much is selected,
+   and the select-all toggle. */
+.instagram-results-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: #7f8da8;
+  font-size: 12px;
+}
+.instagram-load-more { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.instagram-load-more .field-help { margin-top: 0; flex: 1; min-width: 200px; }
+
+.instagram-add-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.instagram-add-row select, .instagram-add-row input { flex: 1; min-width: 160px; }
+.instagram-add-row button { white-space: nowrap; }
+
+.playlists-view { display: grid; gap: 12px; }
+.playlist-card { background: #101729; border: 1px solid #202b44; border-radius: 14px; padding: 0; overflow: hidden; }
+.playlist-card > summary { list-style: none; cursor: pointer; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
+.playlist-card > summary::-webkit-details-marker { display: none; }
+.playlist-card h3 { margin: 0 0 3px; font-size: 15px; }
+.playlist-card summary span { color: #7f8da8; font-size: 12px; }
+.playlist-expanded { padding: 0 16px 16px; border-top: 1px solid #202b44; display: grid; gap: 12px; }
+.playlist-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.playlist-items { display: grid; gap: 8px; }
+.playlist-item { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid #202b44; border-radius: 10px; background: #0c1322; }
+.playlist-item input[type="checkbox"] { width: auto; min-height: 0; }
+.playlist-item img, .playlist-item .instagram-item-placeholder { width: 44px; height: 44px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+.playlist-item-meta { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.playlist-item-meta > span:first-child { font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: #9fc6ff; }
+
+/* State tabs + pager, shared by playlists and the downloads list (Round 10). */
+.playlist-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.playlist-tab { min-height: 32px; padding: 0 12px; font-size: 12px; font-weight: 700; background: #0c1322; color: #8a99b5; border: 1px solid #202b44; border-radius: 999px; cursor: pointer; }
+.playlist-tab.active { background: #17253a; color: #d6e4ff; border-color: #33507e; }
+.playlist-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 4px; color: #7f8da8; font-size: 12px; }
+.downloads .playlist-tabs { margin-bottom: 12px; }
+
+@media (max-width: 680px) {
+  .instagram-items-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  .instagram-add-row select, .instagram-add-row input, .instagram-add-row button { width: 100%; }
+}

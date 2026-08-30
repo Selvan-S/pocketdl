@@ -2,6 +2,130 @@
 
 ## Unreleased
 
+### Instagram: reach every item in a profile, and two playlist UI fixes
+- **Results no longer stop at 50 with no way to see the rest.** The cap is
+  now a page size (default 50, max 200) and the response reports `has_more`
+  plus a cursor, so the UI offers "Load older items" exactly when there is
+  more. The cursor is a date -- both feeds are reverse-chronological and the
+  code already filters on `posted_before` -- rather than an opaque iterator
+  handle that would expire and need rebuilding. Behaviour change: the cap
+  used to apply only when no start date was given; it now always applies,
+  because a date range does not bound the work ("everything since 2019" is
+  a whole-profile walk).
+- **New `POST /api/collections/{id}/profile-items` adds everything a query
+  matches in one call**, without loading it into the page first -- the answer
+  to selecting a profile with 128 reels. Reports `added`, `already_present`
+  and `has_more`, so a truncated bulk add says so. Verified live: 128 reels
+  added in a single 40.8s call.
+- **Select all / clear selection** over the loaded results.
+- **Fixed: a playlist showed nothing after items were added to it.** The item
+  list was fetched once on first expand and cached forever, so the header
+  count updated while the list underneath did not -- leaving no way to see
+  what "Download all" would act on.
+- **Fixed: "New playlist" stopped offering a name field.** Deleting the
+  playlist the panel had auto-selected left the selector holding a dangling
+  id, which hid the name input while the dropdown appeared to show "New
+  playlist…". The selection is now cleared when it no longer exists.
+
+### UI responsiveness: stop shipping full-size images and stop polling
+The reported slowness had three causes, and the preview request's own
+latency was not one of them.
+
+- **Preview thumbnails were the full-size originals** -- `post.url` measured
+  3024x4032 on a real profile, rendered up to 100 at a time. Now the
+  smallest rendition at least 320px wide. Measured across 25 cards on the
+  reported profile: **10.22 MB to 0.62 MB, 16.5x smaller.**
+- **Replaced the 2s poll of four endpoints with server-sent events** at
+  `GET /api/events`. The stream only emits when the snapshot actually
+  differs from the last one sent, so an idle app receives keepalives and
+  nothing else. Waking is driven by a middleware that fires after any
+  successful mutating request, plus download progress ticks, plus a 15s
+  heartbeat so correctness never depends on every call site. The client
+  falls back to polling if EventSource is unavailable or the stream errors.
+  SSE rather than WebSocket: server-to-client only, plain HTTP so it
+  survives the Termux/proxy setup, native reconnect, no new dependency.
+- **The client no longer re-renders on unchanged data** -- each pushed
+  section is compared and the previous value returned when it matches, so
+  React bails out of the render.
+
+### Instagram: reels were coming back empty, and four archive/UX gaps (Phase 5)
+Found by user testing on a second real profile. The previous release read
+reels by filtering the profile grid, which had been verified against only one
+account.
+
+- **Reels returned zero items on profiles whose reels aren't on the grid.**
+  Instagram lets a reel be published without showing on the profile grid, and
+  on a real test profile the grid (25 posts) and the Reels tab (15+ reels)
+  were entirely disjoint. Reels now come from the reels connection directly,
+  driven through `NodeIterator` with a wrapper that returns the raw media
+  struct instead of refetching each reel — one request per 12 reels, rather
+  than instaloader's own ~12s per reel. Dates are recovered from the media id
+  (Snowflake-like), which runs 47s–31min early, so it is treated as an
+  approximation and corrected on download. **50 reels in 23s, from 0.**
+- **Downloads scattered into other users' folders.** Instagram credits a
+  co-authored post to the collaborator, and the download folder keyed on
+  that. Items now record `profile_username` — the profile they were
+  discovered under — separately from `author_username`, with an idempotent
+  column migration and a fallback for existing rows.
+- **Adding the same item twice silently duplicated it.** New unique index on
+  `(collection_id, COALESCE(external_id, source_url))`; adding an item the
+  playlist already holds is now a no-op returning the stored row. Databases
+  with existing duplicates are collapsed on startup, keeping the earliest row
+  so a recorded download isn't lost.
+- **Filenames carry the date again and captions are written again.** Now
+  `2026-08-23_11-09-01_DcYSnllvjCn.mp4` plus a matching `.txt` caption
+  sidecar, so a download folder is readable without PocketDL's database. The
+  per-post metadata JSON stays off. Existing files keep their old names.
+- **Exact caption and post date are backfilled onto the item at download
+  time**, replacing a reel's approximate date with the real one.
+- **The 2s UI poll is now provably unable to reach Instagram.** It never did,
+  but that is now enforced by a test rather than a comment, so a future
+  "always show a verified badge" change can't quietly start rate-limiting the
+  user's account. Adds the project's first HTTP-level test fixture.
+
+### Instagram: fix authenticated preview and downloads (Phase 5)
+First round with a real Instagram session cookie available for testing.
+Preview had been timing out at 90s and downloads had never actually worked.
+Four distinct bugs in `InstaloaderService`, all found by reproducing against
+instaloader directly with per-HTTP-request timing.
+
+- **The engine was never logged in.** Sessions were attached with
+  `context.update_cookies()`, which pushes cookies into the requests session
+  but leaves `context.username` unset — the exact thing `context.is_logged_in`
+  tests — and never sets the `X-CSRFToken` header. `Profile.get_posts()`
+  branches on `is_logged_in`, and its anonymous branch got a 302 to the
+  Instagram homepage, surfaced as a misleading `ConnectionException: JSON
+  Query to graphql/query: Expecting value`. Now uses `context.load_session()`,
+  which sets both; the username behind a pasted cookie is resolved and cached
+  by session verification, so the normal flow costs no extra request.
+- **Reels no longer use `Profile.get_reels()`.** Its connection omits
+  `taken_at`/`caption`/`user.username`, so instaloader refetches every reel
+  individually — measured at 5 reels in 70s across 17 requests, i.e. ~10
+  minutes for the 50-item cap, which is what the 90s timeout was catching.
+  Reels are now the `product_type == 'clips'` entries of the ordinary
+  timeline: verified to be the same posts in the same order, with complete
+  metadata, 12 per request.
+- **Date filtering no longer stops at a pinned post.** Instagram serves
+  pinned posts at the head of the timeline regardless of age, so the
+  "everything after this is older" early-exit could return nothing at all.
+  Pinned entries are now skipped rather than ending the scan.
+- **Downloads wrote nothing and reported success.** The absolute target
+  directory was passed as `download_post(target=...)`, which instaloader
+  substitutes into `dirname_pattern` and sanitizes — on Windows rewriting
+  `:` and `\` into lookalike characters, creating one literal mojibake
+  directory under the working directory while still returning `True`. The
+  job was then marked completed with no output file. The target directory is
+  now a literal `dirname_pattern`, and a download is never reported complete
+  unless the file exists on disk.
+- Posts and reels now share a single timeline scan instead of paging the
+  same feed once per bucket (100 items in 45s, down from 63s).
+
+Live-verified end to end through the HTTP API against a real session and a
+real profile: preview returns real captions/dates/authors/thumbnails with
+correct post/carousel/reel classification, session verify works including
+after a reload, and a reel and a carousel both downloaded real files to the
+correct folders. 35 regression tests added.
+
 ### Capture quality selection: master/variant manifest grouping (0.2.4)
 The repeatedly-deferred backlog item from Phase 2 and Phase 4. An HLS master
 playlist advertises the same video at several qualities, each as its own

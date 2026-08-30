@@ -140,3 +140,126 @@ export interface SettingsResponse {
   download_directory: string;
   default_download_directory: string;
 }
+
+export interface BrowseDirectoryResponse {
+  /** The chosen absolute path, or null if the user cancelled the dialog. */
+  path: string | null;
+}
+
+export type InstagramContentType = 'post' | 'carousel' | 'reel' | 'story' | 'highlight';
+
+export interface InstagramProfilePreviewRequest {
+  profile_url: string;
+  content_types?: InstagramContentType[];
+  /** ISO datetime strings. Only applied to posts/reels -- stories/highlights
+   * aren't meaningfully date-bounded, see InstaloaderService. */
+  posted_after?: string;
+  /** Doubles as the paging cursor -- pass the oldest posted_at you already
+   * have to get the page behind it. */
+  posted_before?: string;
+  /** Page size. Omitted means the server default (50); a larger page costs
+   * proportionally more requests to Instagram but far less than paging
+   * repeatedly, since each page re-scans the ones above it. */
+  limit?: number;
+}
+
+export interface ProfileItemPreview {
+  source_url: string;
+  content_type: InstagramContentType;
+  author_username: string | null;
+  /** The profile this item was discovered under. Differs from
+   * author_username when Instagram credits a post to a collaborator, and it
+   * is what decides the download folder. */
+  profile_username: string | null;
+  caption: string | null;
+  thumbnail_url: string | null;
+  external_id: string | null;
+  posted_at: string | null;
+}
+
+export interface InstagramProfilePreviewResponse {
+  items: ProfileItemPreview[];
+  /** True when a content type exactly filled its page, i.e. there is more
+   * behind this. */
+  has_more: boolean;
+  /** Pass back as `posted_before` to fetch the page behind this one. Null
+   * when this is the end. */
+  next_posted_before: string | null;
+}
+
+export interface CollectionAddProfileItemsResponse {
+  added: number;
+  already_present: number;
+  has_more: boolean;
+  next_posted_before: string | null;
+}
+
+export interface InstagramSessionStatus {
+  configured: boolean;
+  /** Set only right after a successful save, or by the explicit verify
+   * call -- not populated by every status poll. */
+  verified_username: string | null;
+}
+
+export interface Collection {
+  id: string;
+  platform: 'instagram';
+  name: string;
+  item_count: number;
+  /** How many of item_count have completed a download. Drives the
+   * Pending/Downloaded tab counts and the live "Downloaded" badge without
+   * shipping every row. */
+  downloaded_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Which download-state slice of a playlist to fetch. Mirrors the server's
+ * `state` query param on GET /collections/{id}/items. */
+export type CollectionItemState = 'all' | 'pending' | 'downloaded';
+
+export interface CollectionItemsQuery {
+  state?: CollectionItemState;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CollectionItem {
+  id: string;
+  collection_id: string;
+  source_url: string;
+  content_type: InstagramContentType;
+  author_username: string | null;
+  /** The profile this item was discovered under. Differs from
+   * author_username when Instagram credits a post to a collaborator, and it
+   * is what decides the download folder. */
+  profile_username: string | null;
+  caption: string | null;
+  thumbnail_url: string | null;
+  external_id: string | null;
+  added_at: string;
+  posted_at: string | null;
+  downloaded_job_id: string | null;
+}
+
+export interface CollectionDownloadRequest {
+  item_ids?: string[];
+  preset?: 'best' | '1080p' | '720p' | 'audio';
+  concurrent_fragments?: number;
+  retries?: number;
+}
+
+/** One `state` frame from GET /api/events -- everything the old 2s refresh
+ * loop used to fetch from four separate endpoints. A field is null when the
+ * server could not build that part, which must not blank out what the UI is
+ * already showing. */
+export interface ServerStateEvent {
+  downloads: DownloadItem[] | null;
+  status: SystemStatus | null;
+  captures: CaptureItem[] | null;
+  settings: SettingsResponse | null;
+  /** Collection *summaries* only (counts, not items). Present so playlists
+   * update live; an open playlist re-fetches its own items when these
+   * counts move. Null when the server could not build this part. */
+  collections: Collection[] | null;
+}

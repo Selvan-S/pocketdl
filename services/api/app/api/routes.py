@@ -1,27 +1,52 @@
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
+import asyncio
+import json
+import logging
+
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from .schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     AnalyzedFormatResponse,
+    BrowseDirectoryResponse,
     CaptureCreateRequest,
     CaptureDownloadRequest,
     CaptureResponse,
     CaptureVariantResponse,
+    CollectionAddProfileItemsRequest,
+    CollectionAddProfileItemsResponse,
+    CollectionCreateRequest,
+    CollectionDownloadRequest,
+    CollectionItemAddRequest,
+    CollectionItemResponse,
+    CollectionRenameRequest,
+    CollectionResponse,
     DownloadCreateRequest,
     DownloadResponse,
+    InstagramProfilePreviewRequest,
+    InstagramProfilePreviewResponse,
+    InstagramSessionRequest,
+    InstagramSessionStatusResponse,
+    ProfileItemPreviewResponse,
     SystemStatusResponse,
     SettingsResponse,
     SettingsUpdateRequest,
 )
 from ..application.captures.service import CaptureService
+from ..application.collections.service import CollectionService
 from ..core.path_settings import normalize_download_directory
-from ..core.platform import open_directory
+from ..core.platform import DirectoryPickerUnavailable, browse_for_directory, open_directory
+from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
 from ..core.settings_store import clear_download_directory, save_download_directory
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
+from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
 from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api')
 
 
@@ -117,6 +142,35 @@ def capture_response(capture, variants: list[CaptureVariant] | None = None) -> C
         used_at=capture.used_at,
         variants_status=capture.variants_status,
         variants=[variant_response(variant, capture.duration_seconds) for variant in variants or []],
+    )
+
+
+def collection_response(collection: Collection, item_count: int, downloaded_count: int = 0) -> CollectionResponse:
+    return CollectionResponse(
+        id=collection.id,
+        platform=collection.platform.value,
+        name=collection.name,
+        item_count=item_count,
+        downloaded_count=downloaded_count,
+        created_at=collection.created_at,
+        updated_at=collection.updated_at,
+    )
+
+
+def collection_item_response(item: CollectionItem) -> CollectionItemResponse:
+    return CollectionItemResponse(
+        id=item.id,
+        collection_id=item.collection_id,
+        source_url=item.source_url,
+        content_type=item.content_type,
+        author_username=item.author_username,
+        profile_username=item.profile_username,
+        caption=item.caption,
+        thumbnail_url=item.thumbnail_url,
+        external_id=item.external_id,
+        added_at=item.added_at,
+        posted_at=item.posted_at,
+        downloaded_job_id=item.downloaded_job_id,
     )
 
 
@@ -292,6 +346,96 @@ async def delete_capture(capture_id: str, request: Request) -> dict[str, bool]:
     return {'ok': True}
 
 
+# How long an idle stream waits before rebuilding its snapshot anyway. The
+# notifier wakes it immediately on any real change, so this is purely a
+# safety net for a mutation nobody instrumented -- and it doubles as the
+# keepalive that stops an idle connection being dropped by a proxy.
+_EVENT_HEARTBEAT_SECONDS = 15.0
+# Floor between two pushes. A running download updates progress many times a
+# second; without this the stream would be chattier than the 2s poll it
+# replaced.
+_EVENT_MIN_INTERVAL_SECONDS = 0.4
+
+
+async def _event_snapshot(request: Request) -> dict:
+    """Everything the PWA's old refresh loop fetched, in one payload.
+
+    Deliberately calls the same handlers the individual endpoints do rather
+    than re-querying, so the two can never disagree.
+    """
+    downloads, system, captures, settings_payload, collections = await asyncio.gather(
+        list_downloads(request),
+        system_status(request),
+        list_captures(request),
+        get_settings_route(request),
+        list_collections(request),
+        return_exceptions=True,
+    )
+
+    def ok(value):
+        return None if isinstance(value, BaseException) else value
+
+    # Collections carry *summaries only* (id, name, counts) -- never their
+    # items. A 128-item playlist in every snapshot, rebuilt on each progress
+    # tick, is exactly the cost this avoids; the counts are enough to drive a
+    # live badge and let an open playlist decide when to re-fetch its page.
+    return {
+        'downloads': [item.model_dump(mode='json') for item in (ok(downloads) or [])],
+        'status': (payload.model_dump(mode='json') if (payload := ok(system)) else None),
+        'captures': [item.model_dump(mode='json') for item in (ok(captures) or [])],
+        'settings': (payload.model_dump(mode='json') if (payload := ok(settings_payload)) else None),
+        'collections': [item.model_dump(mode='json') for item in (ok(collections) or [])],
+    }
+
+
+@router.get('/events')
+async def events(request: Request) -> StreamingResponse:
+    """Server-sent stream replacing the PWA's 2s poll of four endpoints.
+
+    SSE rather than a WebSocket: the traffic is entirely server-to-client,
+    it is plain HTTP so it survives the Termux/reverse-proxy setup without
+    an upgrade path, browsers reconnect on their own, and it needs no extra
+    dependency.
+
+    The stream only emits when the snapshot actually differs from the one
+    already sent, so an idle app receives nothing but comment-only
+    keepalives and never re-renders.
+    """
+    notifier = request.app.state.change_notifier
+
+    async def stream():
+        last_payload: str | None = None
+        # Tell the browser how long to wait before reconnecting if the
+        # connection drops (default is 3s, which is unnecessarily eager).
+        yield 'retry: 5000\n\n'
+        while True:
+            # Read the version *before* building, so a change landing while
+            # this snapshot is being built or throttled is still waiting for
+            # us at the bottom of the loop rather than lost.
+            seen = notifier.version
+            payload = json.dumps(await _event_snapshot(request), default=str)
+            if payload != last_payload:
+                last_payload = payload
+                yield f'event: state\ndata: {payload}\n\n'
+            else:
+                # A comment line: keeps the connection (and any proxy in
+                # front of it) alive without waking the client's handler.
+                yield ': keepalive\n\n'
+            await asyncio.sleep(_EVENT_MIN_INTERVAL_SECONDS)
+            await notifier.wait(since=seen, timeout=_EVENT_HEARTBEAT_SECONDS)
+
+    return StreamingResponse(
+        stream(),
+        media_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache, no-transform',
+            # nginx and friends buffer streamed responses by default, which
+            # would hold every event until the buffer filled.
+            'X-Accel-Buffering': 'no',
+        },
+    )
+
+
 @router.get('/settings', response_model=SettingsResponse)
 async def get_settings_route(request: Request) -> SettingsResponse:
     settings = request.app.state.settings
@@ -343,6 +487,20 @@ async def open_download_directory(request: Request) -> dict[str, object]:
     return {'ok': True, 'download_directory': str(settings.download_directory)}
 
 
+@router.post('/settings/browse-download-directory', response_model=BrowseDirectoryResponse)
+async def browse_download_directory(request: Request) -> BrowseDirectoryResponse:
+    """Desktop-only: opens a native OS folder picker on the machine running
+    the backend and returns the chosen path without saving it -- the caller
+    still confirms via the existing PUT /settings, same as if they had
+    typed the path themselves."""
+    settings = request.app.state.settings
+    try:
+        chosen = await asyncio.to_thread(browse_for_directory, settings.download_directory)
+    except DirectoryPickerUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    return BrowseDirectoryResponse(path=chosen)
+
+
 @router.get('/system/status', response_model=SystemStatusResponse)
 async def system_status(request: Request) -> SystemStatusResponse:
     versions = await request.app.state.downloader.versions()
@@ -362,3 +520,249 @@ async def system_status(request: Request) -> SystemStatusResponse:
 async def update_yt_dlp(request: Request) -> dict[str, object]:
     version = await request.app.state.downloader.update_yt_dlp()
     return {'ok': True, 'version': version}
+
+
+@router.post('/instagram/profile/preview', response_model=InstagramProfilePreviewResponse)
+async def preview_instagram_profile(payload: InstagramProfilePreviewRequest, request: Request) -> InstagramProfilePreviewResponse:
+    service = request.app.state.profile_discovery_service
+    try:
+        page = await service.preview(
+            payload.profile_url,
+            [InstagramContentType(value) for value in payload.content_types],
+            payload.posted_after,
+            payload.posted_before,
+            payload.limit,
+        )
+    except InstagramAuthRequiredError as exc:
+        logger.info('Instagram profile preview requires a session: %s (%s)', payload.profile_url, exc)
+        raise HTTPException(status_code=401, detail=f'Instagram session required: {exc}') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # Not a client mistake (bad URL/input already 422'd above) -- an
+        # actual instaloader failure the response body alone won't leave a
+        # durable trace of, so it's worth a real server-side log line.
+        logger.warning('Instagram profile preview failed: %s (%s)', payload.profile_url, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return InstagramProfilePreviewResponse(
+        items=[_preview_response(item) for item in page.items],
+        has_more=page.has_more,
+        next_posted_before=page.next_posted_before,
+    )
+
+
+def _preview_response(item: ProfileItemPreview) -> ProfileItemPreviewResponse:
+    return ProfileItemPreviewResponse(
+        source_url=item.source_url, content_type=item.content_type, author_username=item.author_username,
+        profile_username=item.profile_username, caption=item.caption, thumbnail_url=item.thumbnail_url,
+        external_id=item.external_id, posted_at=item.posted_at,
+    )
+
+
+@router.post('/collections/{collection_id}/profile-items', response_model=CollectionAddProfileItemsResponse)
+async def add_profile_items_to_collection(
+    collection_id: str, payload: CollectionAddProfileItemsRequest, request: Request,
+) -> CollectionAddProfileItemsResponse:
+    """Add every item matching a profile query, without previewing it first.
+
+    Selecting a whole profile otherwise meant paging through it by hand and
+    holding every card on screen just to tick them.
+    """
+    discovery = request.app.state.profile_discovery_service
+    collections: CollectionService = request.app.state.collection_service
+    if await collections.get_collection(collection_id) is None:
+        raise HTTPException(status_code=404, detail='Collection not found.')
+
+    try:
+        page = await discovery.preview(
+            payload.profile_url,
+            [InstagramContentType(value) for value in payload.content_types],
+            payload.posted_after,
+            payload.posted_before,
+            payload.limit,
+        )
+    except InstagramAuthRequiredError as exc:
+        raise HTTPException(status_code=401, detail=f'Instagram session required: {exc}') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.warning('Instagram bulk add failed: %s (%s)', payload.profile_url, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    added, already_present = await collections.add_items(collection_id, page.items)
+    return CollectionAddProfileItemsResponse(
+        added=added,
+        already_present=already_present,
+        has_more=page.has_more,
+        next_posted_before=page.next_posted_before,
+    )
+
+
+@router.get('/instagram/session', response_model=InstagramSessionStatusResponse)
+async def get_instagram_session_status(request: Request) -> InstagramSessionStatusResponse:
+    settings = request.app.state.settings
+    # Deliberately does not call verify_session() here -- this is polled by
+    # the UI like any other settings fetch, and verification is a real
+    # network call to Instagram; see POST .../session and .../verify below.
+    return InstagramSessionStatusResponse(configured=has_session_cookie(settings.database_path, 'instagram'))
+
+
+@router.post('/instagram/session', response_model=InstagramSessionStatusResponse)
+async def set_instagram_session(payload: InstagramSessionRequest, request: Request) -> InstagramSessionStatusResponse:
+    settings = request.app.state.settings
+    try:
+        save_session_cookie(settings.database_path, 'instagram', '.instagram.com', payload.cookie_header)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    verified_username = await _verify_instagram_session(request)
+    return InstagramSessionStatusResponse(configured=True, verified_username=verified_username)
+
+
+@router.post('/instagram/session/verify', response_model=InstagramSessionStatusResponse)
+async def verify_instagram_session(request: Request) -> InstagramSessionStatusResponse:
+    settings = request.app.state.settings
+    configured = has_session_cookie(settings.database_path, 'instagram')
+    verified_username = await _verify_instagram_session(request) if configured else None
+    return InstagramSessionStatusResponse(configured=configured, verified_username=verified_username)
+
+
+async def _verify_instagram_session(request: Request) -> str | None:
+    """Best-effort: a real call to Instagram, so a network hiccup here
+    should not fail the surrounding save/status request -- it just means
+    the caller doesn't get a verified username this time."""
+    service = request.app.state.profile_discovery_service
+    try:
+        return await service.verify_session()
+    except Exception as exc:
+        logger.info('Instagram session verification failed: %s', exc)
+        return None
+
+
+@router.delete('/instagram/session')
+async def clear_instagram_session(request: Request) -> dict[str, bool]:
+    settings = request.app.state.settings
+    clear_session_cookie(settings.database_path, 'instagram')
+    return {'ok': True}
+
+
+@router.get('/collections', response_model=list[CollectionResponse])
+async def list_collections(request: Request) -> list[CollectionResponse]:
+    service: CollectionService = request.app.state.collection_service
+    collections = await service.list_collections()
+    # One GROUP BY for every collection's (total, downloaded) counts, rather
+    # than a list_items query per collection -- this route is also built into
+    # every SSE snapshot, which rebuilds on each download progress tick.
+    counts = await service.collection_counts()
+    responses = []
+    for collection in collections:
+        total, downloaded = counts.get(collection.id, (0, 0))
+        responses.append(collection_response(collection, total, downloaded))
+    return responses
+
+
+@router.post('/collections', response_model=CollectionResponse, status_code=status.HTTP_201_CREATED)
+async def create_collection(payload: CollectionCreateRequest, request: Request) -> CollectionResponse:
+    service: CollectionService = request.app.state.collection_service
+    try:
+        collection = await service.create_collection(Platform(payload.platform), payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return collection_response(collection, 0)
+
+
+@router.get('/collections/{collection_id}', response_model=CollectionResponse)
+async def get_collection(collection_id: str, request: Request) -> CollectionResponse:
+    service: CollectionService = request.app.state.collection_service
+    collection = await service.get_collection(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail='Collection not found')
+    items = await service.list_items(collection_id)
+    downloaded = sum(1 for item in items if item.downloaded_job_id is not None)
+    return collection_response(collection, len(items), downloaded)
+
+
+@router.put('/collections/{collection_id}', response_model=CollectionResponse)
+async def rename_collection(collection_id: str, payload: CollectionRenameRequest, request: Request) -> CollectionResponse:
+    service: CollectionService = request.app.state.collection_service
+    try:
+        collection = await service.rename_collection(collection_id, payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    items = await service.list_items(collection_id)
+    downloaded = sum(1 for item in items if item.downloaded_job_id is not None)
+    return collection_response(collection, len(items), downloaded)
+
+
+@router.delete('/collections/{collection_id}')
+async def delete_collection(collection_id: str, request: Request) -> dict[str, bool]:
+    service: CollectionService = request.app.state.collection_service
+    await service.delete_collection(collection_id)
+    return {'ok': True}
+
+
+@router.get('/collections/{collection_id}/items', response_model=list[CollectionItemResponse])
+async def list_collection_items(
+    collection_id: str,
+    request: Request,
+    state: Literal['all', 'pending', 'downloaded'] = 'all',
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[CollectionItemResponse]:
+    """One page of a playlist, filtered by download state.
+
+    A long playlist is split into pending / downloaded / all tabs, each
+    paged, so it is no longer one unbounded scroll. The by-state totals a
+    client needs to render those tabs live come from the collection summary
+    (item_count / downloaded_count), so this returns just the rows.
+    """
+    service: CollectionService = request.app.state.collection_service
+    collection = await service.get_collection(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail='Collection not found')
+    items = await service.list_items_page(collection_id, state=state, limit=limit, offset=offset)
+    return [collection_item_response(item) for item in items]
+
+
+@router.post('/collections/{collection_id}/items', response_model=CollectionItemResponse, status_code=status.HTTP_201_CREATED)
+async def add_collection_item(collection_id: str, payload: CollectionItemAddRequest, request: Request) -> CollectionItemResponse:
+    service: CollectionService = request.app.state.collection_service
+    preview = ProfileItemPreview(
+        source_url=payload.source_url,
+        content_type=payload.content_type,
+        author_username=payload.author_username,
+        profile_username=payload.profile_username,
+        caption=payload.caption,
+        thumbnail_url=payload.thumbnail_url,
+        external_id=payload.external_id,
+        posted_at=payload.posted_at,
+    )
+    try:
+        item = await service.add_item(collection_id, preview)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return collection_item_response(item)
+
+
+@router.delete('/collections/{collection_id}/items/{item_id}')
+async def remove_collection_item(collection_id: str, item_id: str, request: Request) -> dict[str, bool]:
+    service: CollectionService = request.app.state.collection_service
+    await service.remove_item(collection_id, item_id)
+    return {'ok': True}
+
+
+@router.post('/collections/{collection_id}/download', response_model=list[DownloadResponse], status_code=status.HTTP_201_CREATED)
+async def download_collection(collection_id: str, payload: CollectionDownloadRequest, request: Request) -> list[DownloadResponse]:
+    service: CollectionService = request.app.state.collection_service
+    try:
+        jobs = await service.download_collection(
+            collection_id,
+            payload.item_ids,
+            request_context=RequestContext(impersonation=ImpersonationMode.NONE),
+            preset=payload.preset,
+            concurrent_fragments=payload.concurrent_fragments,
+            retries=payload.retries,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [to_response(job) for job in jobs]

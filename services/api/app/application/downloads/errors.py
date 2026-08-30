@@ -18,7 +18,7 @@ def classify_download_error(output: str) -> DownloadErrorCategory:
         return DownloadErrorCategory.FFMPEG_ERROR
     if 'rate limit' in text or 'too many requests' in text or 'http error 429' in text:
         return DownloadErrorCategory.RATE_LIMITED
-    if 'authentication required' in text or 'login required' in text or 'sign in to confirm' in text:
+    if 'authentication required' in text or 'login required' in text or 'sign in to confirm' in text or 'redirect to login' in text:
         return DownloadErrorCategory.AUTHENTICATION_REQUIRED
     if 'http error 401' in text or 'status code: 401' in text:
         return DownloadErrorCategory.HTTP_401

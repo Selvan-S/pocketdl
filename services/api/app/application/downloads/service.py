@@ -1,12 +1,13 @@
 import asyncio
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ...core.filenames import sanitize_filename
 from ...domain.errors import DownloadErrorCategory
-from ...domain.models import DownloadJob, DownloadSourceType, DownloadStatus, RequestContext
-from ...domain.ports import CaptureRepository, DownloadRepository, Downloader
+from ...domain.models import DownloadEngine, DownloadJob, DownloadSourceType, DownloadStatus, RequestContext
+from ...domain.ports import CaptureRepository, CollectionRepository, DownloadRepository, Downloader
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,7 @@ class JobOptions:
     source_type: DownloadSourceType
     capture_id: str | None
     audio_url: str | None
+    collection_item_id: str | None
 
 
 class QueueService:
@@ -30,14 +32,27 @@ class QueueService:
         downloader: Downloader,
         max_concurrent: int,
         capture_repository: CaptureRepository | None = None,
+        collection_repository: CollectionRepository | None = None,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
+        # Fired on every progress update so a subscriber (the SSE stream) can
+        # push instead of being polled. Progress changes state without any
+        # HTTP request, so it is the one place the request middleware cannot
+        # cover. Optional so tests can construct a queue without one.
+        self._on_change = on_change
         self.repository = repository
         self.downloader = downloader
         self.capture_repository = capture_repository
+        self.collection_repository = collection_repository
         self.semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.contexts: dict[str, RequestContext] = {}
         self.options: dict[str, JobOptions] = {}
+
+    async def _record_progress(self, job: DownloadJob) -> None:
+        await self.repository.update(job)
+        if self._on_change is not None:
+            self._on_change()
 
     async def create(
         self,
@@ -53,6 +68,8 @@ class QueueService:
         title: str | None = None,
         format_id: str | None = None,
         audio_url: str | None = None,
+        engine: DownloadEngine = DownloadEngine.YT_DLP,
+        collection_item_id: str | None = None,
     ) -> DownloadJob:
         normalized_filename = sanitize_filename(filename) if filename else None
         if not normalized_filename and title:
@@ -83,6 +100,8 @@ class QueueService:
             started_at=None,
             finished_at=None,
             capture_id=capture_id,
+            engine=engine,
+            collection_item_id=collection_item_id,
         )
         await self.repository.add(job)
         self.contexts[job.id] = request_context
@@ -95,6 +114,7 @@ class QueueService:
             source_type=source_type,
             capture_id=capture_id,
             audio_url=audio_url,
+            collection_item_id=collection_item_id,
         )
         self.tasks[job.id] = asyncio.create_task(self._run(job.id))
         return job
@@ -107,6 +127,7 @@ class QueueService:
                     return
                 options = self.options[job_id]
                 capture_id = options.capture_id
+                collection_item_id = options.collection_item_id
                 request_context = self.contexts[job_id]
                 await self.downloader.download(
                     latest,
@@ -119,12 +140,23 @@ class QueueService:
                     source_type=options.source_type,
                     capture_id=capture_id,
                     audio_url=options.audio_url,
-                    on_progress=self.repository.update,
+                    collection_item_id=collection_item_id,
+                    on_progress=self._record_progress,
                 )
                 if capture_id and self.capture_repository:
                     finished = await self.repository.get(job_id)
                     if finished is not None and finished.status is DownloadStatus.COMPLETED:
                         await self.capture_repository.mark_downloaded(capture_id)
+                if collection_item_id and self.collection_repository:
+                    finished = await self.repository.get(job_id)
+                    if finished is not None and finished.status is DownloadStatus.COMPLETED:
+                        await self.collection_repository.mark_item_downloaded(collection_item_id, job_id)
+                        # The COMPLETED progress tick already fired on_change,
+                        # but that was *before* this row moved to downloaded --
+                        # so a playlist's downloaded_count would otherwise lag
+                        # to the next heartbeat. Nudge the stream again now.
+                        if self._on_change is not None:
+                            self._on_change()
         except asyncio.CancelledError:
             raise
         except Exception as exc:

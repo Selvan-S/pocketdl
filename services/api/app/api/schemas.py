@@ -235,3 +235,163 @@ class SettingsResponse(BaseModel):
 
 class SettingsUpdateRequest(BaseModel):
     download_directory: str = Field(min_length=1, max_length=2000)
+
+
+class BrowseDirectoryResponse(BaseModel):
+    path: str | None
+    """The chosen absolute path, or None if the user cancelled the dialog."""
+
+
+class InstagramProfilePreviewRequest(BaseModel):
+    profile_url: str
+    content_types: list[Literal['post', 'carousel', 'reel', 'story', 'highlight']] = Field(
+        default_factory=lambda: ['post', 'reel', 'story', 'highlight'],
+    )
+    # Only applied to posts/reels -- stories/highlights aren't meaningfully
+    # date-bounded browsing, see InstaloaderService._collect_posts.
+    posted_after: datetime | None = None
+    # Doubles as the paging cursor: ask again with the oldest posted_at you
+    # already have to get the page behind it. See
+    # InstaloaderService.ProfileItemPage.next_posted_before for why the
+    # cursor is a date rather than an opaque handle.
+    posted_before: datetime | None = None
+    # Omitted means the default page size. Raising it costs proportionally
+    # more requests to Instagram and is clamped server-side, but is much
+    # cheaper than paging repeatedly, since each page re-scans the ones
+    # above it.
+    limit: int | None = Field(default=None, ge=1, le=200)
+
+    @field_validator('profile_url')
+    @classmethod
+    def validate_profile_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+            raise ValueError('profile_url must use http or https.')
+        return value
+
+    @field_validator('content_types')
+    @classmethod
+    def validate_content_types(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError('At least one content type must be requested.')
+        return value
+
+
+class ProfileItemPreviewResponse(BaseModel):
+    source_url: str
+    content_type: str
+    author_username: str | None
+    profile_username: str | None = None
+    caption: str | None
+    thumbnail_url: str | None
+    external_id: str | None
+    posted_at: datetime | None = None
+
+
+class InstagramProfilePreviewResponse(BaseModel):
+    items: list[ProfileItemPreviewResponse]
+    # True when a bucket exactly filled its page, i.e. there is genuinely
+    # more behind this. Previously the result was silently truncated with no
+    # way to tell, and no way to ask for the rest.
+    has_more: bool = False
+    # Pass back as `posted_before` to fetch the next page. Null when this
+    # page is the end. Callers must de-duplicate by external_id, since items
+    # sharing a timestamp with the last of this page can reappear.
+    next_posted_before: datetime | None = None
+
+
+class CollectionAddProfileItemsRequest(InstagramProfilePreviewRequest):
+    """Run a profile query server-side and add everything it matches.
+
+    The point is that choosing "all of it" should not require rendering all
+    of it first: a profile with 128 reels needed three manual pages and 128
+    cards on screen before the user could select them.
+    """
+
+
+class CollectionAddProfileItemsResponse(BaseModel):
+    added: int
+    already_present: int
+    # True when the query filled its page, i.e. items matching the filters
+    # were left behind. Reported rather than hidden so the UI can say so and
+    # suggest narrowing the date range.
+    has_more: bool
+    next_posted_before: datetime | None = None
+
+
+class InstagramSessionRequest(BaseModel):
+    """Write-only: the raw pasted Cookie header value is validated and
+    stored, never echoed back by any response -- see
+    InstagramSessionStatusResponse."""
+
+    cookie_header: str = Field(min_length=1, max_length=20000)
+
+
+class InstagramSessionStatusResponse(BaseModel):
+    configured: bool
+    # Set only right after a successful save, or by the explicit verify
+    # endpoint -- a real call to Instagram, not made on every status poll.
+    verified_username: str | None = None
+
+
+class CollectionCreateRequest(BaseModel):
+    platform: Literal['instagram'] = 'instagram'
+    name: str = Field(min_length=1, max_length=200)
+
+
+class CollectionRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class CollectionResponse(BaseModel):
+    id: str
+    platform: str
+    name: str
+    item_count: int
+    # How many of item_count have completed a download. Lets a client show
+    # "Pending 78 / Downloaded 50" and drive a live badge without shipping
+    # every row to compute it.
+    downloaded_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class CollectionItemAddRequest(BaseModel):
+    source_url: str
+    content_type: Literal['post', 'carousel', 'reel', 'story', 'highlight']
+    author_username: str | None = Field(default=None, max_length=200)
+    profile_username: str | None = Field(default=None, max_length=200)
+    caption: str | None = Field(default=None, max_length=5000)
+    thumbnail_url: str | None = Field(default=None, max_length=2000)
+    external_id: str | None = Field(default=None, max_length=200)
+    posted_at: datetime | None = None
+
+    @field_validator('source_url')
+    @classmethod
+    def validate_source_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+            raise ValueError('source_url must use http or https.')
+        return value
+
+
+class CollectionItemResponse(BaseModel):
+    id: str
+    collection_id: str
+    source_url: str
+    content_type: str
+    author_username: str | None
+    profile_username: str | None = None
+    caption: str | None
+    thumbnail_url: str | None
+    external_id: str | None
+    added_at: datetime
+    posted_at: datetime | None
+    downloaded_job_id: str | None
+
+
+class CollectionDownloadRequest(BaseModel):
+    item_ids: list[str] | None = None
+    preset: Literal['best', '1080p', '720p', 'audio'] = 'best'
+    concurrent_fragments: int = Field(default=8, ge=1, le=32)
+    retries: int = Field(default=10, ge=1, le=100)

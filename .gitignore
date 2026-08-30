@@ -38,6 +38,13 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Local-only test credentials (real browser session cookies used to
+# exercise the Instagram/Phase 5 path against live data). Never commit
+# these: a session cookie is a full account credential, not a token with
+# reduced scope. The whole directory is ignored so a new platform's test
+# session can be dropped in without touching this file again.
+/.secrets/
+
 # -------------------------
 # Runtime data
 # -------------------------
@@ -45,6 +52,7 @@ pnpm-debug.log*
 *.sqlite
 *.sqlite3
 *.log
+*_session_cookies.txt
 
 # PocketDL temporary files
 /tmp/
