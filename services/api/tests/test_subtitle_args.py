@@ -66,3 +66,30 @@ def test_audio_language_adds_sort_preference() -> None:
     args = _args(MediaOptions(audio_language='pt-BR'))
     assert '-S' in args
     assert args[args.index('-S') + 1] == 'lang:pt-BR'
+
+
+# --- Conflict strategy (product-polish Round 3) ---
+
+def test_conflict_skip_and_overwrite_flags() -> None:
+    from app.domain.models import ConflictStrategy
+    skip = _args(MediaOptions(conflict_strategy=ConflictStrategy.SKIP))
+    assert '--no-overwrites' in skip and '--force-overwrites' not in skip
+    overwrite = _args(MediaOptions(conflict_strategy=ConflictStrategy.OVERWRITE))
+    assert '--force-overwrites' in overwrite and '--no-overwrites' not in overwrite
+
+
+def test_unique_stem_appends_counter(tmp_path) -> None:
+    from app.core.filenames import unique_stem
+    assert unique_stem(tmp_path, 'video') == 'video'
+    (tmp_path / 'video.mp4').write_bytes(b'x')
+    assert unique_stem(tmp_path, 'video') == 'video (1)'
+    (tmp_path / 'video (1).mkv').write_bytes(b'x')
+    assert unique_stem(tmp_path, 'video') == 'video (2)'
+
+
+def test_unique_stem_handles_glob_metacharacters(tmp_path) -> None:
+    from app.core.filenames import unique_stem
+    (tmp_path / 'a[1].mp4').write_bytes(b'x')
+    # The literal 'a[1]' collides; a different literal does not.
+    assert unique_stem(tmp_path, 'a[1]') == 'a[1] (1)'
+    assert unique_stem(tmp_path, 'a1') == 'a1'

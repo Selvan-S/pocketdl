@@ -47,6 +47,8 @@ export interface DownloadCreateRequest {
   embed_subtitles?: boolean;
   /** Preferred audio-track language code (e.g. "en", "pt-BR") when a source has several. */
   audio_language?: string;
+  /** What to do if the output file already exists (standard downloads). */
+  conflict_strategy?: 'skip' | 'overwrite' | 'rename';
   request_context?: {
     page_url?: string;
     referer?: string;

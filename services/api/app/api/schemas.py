@@ -55,6 +55,8 @@ class DownloadCreateRequest(BaseModel):
     subtitle_langs: str = Field(default='en', min_length=1, max_length=100)
     embed_subtitles: bool = False
     audio_language: str | None = Field(default=None, max_length=20)
+    # What to do if the output file already exists (standard downloads).
+    conflict_strategy: Literal['skip', 'overwrite', 'rename'] = 'skip'
     request_context: RequestContextRequest = Field(default_factory=RequestContextRequest)
 
     @field_validator('subtitle_langs')

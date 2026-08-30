@@ -31,6 +31,7 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
   const [subtitleLangs, setSubtitleLangs] = useState('en');
   const [embedSubtitles, setEmbedSubtitles] = useState(false);
   const [audioLanguage, setAudioLanguage] = useState('');
+  const [conflictStrategy, setConflictStrategy] = useState<NonNullable<DownloadCreateRequest['conflict_strategy']>>('skip');
   const [presetName, setPresetName] = useState('');
   const [savingPreset, setSavingPreset] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -53,6 +54,7 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
       options.embed_subtitles = embedSubtitles;
     }
     if (audioLanguage.trim()) options.audio_language = audioLanguage.trim();
+    if (conflictStrategy !== 'skip') options.conflict_strategy = conflictStrategy;
     return options;
   }
 
@@ -249,6 +251,14 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
           )}
           <label htmlFor="audio-language">Preferred audio language <span className="hint">(optional)</span>
             <input id="audio-language" value={audioLanguage} onChange={(event) => setAudioLanguage(event.target.value)} placeholder="e.g. en, pt-BR" maxLength={20} />
+          </label>
+
+          <label htmlFor="conflict-strategy">If the file already exists
+            <select id="conflict-strategy" value={conflictStrategy} onChange={(event) => setConflictStrategy(event.target.value as typeof conflictStrategy)}>
+              <option value="skip">Skip (keep existing)</option>
+              <option value="rename">Rename (keep both)</option>
+              <option value="overwrite">Overwrite</option>
+            </select>
           </label>
 
           <div className="field-help">Save the current quality + performance settings as a reusable preset.</div>

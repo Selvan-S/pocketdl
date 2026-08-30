@@ -23,3 +23,25 @@ def sanitize_filename(value: str) -> str:
         stem = f'_{stem}'
 
     return stem[:200]
+
+
+def unique_stem(directory: Path, stem: str) -> str:
+    """A filename stem that doesn't collide with an existing file of any
+    extension in `directory`. Returns `stem` unchanged if nothing matches,
+    else appends " (1)", " (2)", ... -- the "rename" conflict strategy.
+
+    Matches on the stem across extensions (``stem.*``) because the real
+    output extension isn't known until the download resolves it.
+    """
+    if not any(directory.glob(f'{glob_escape(stem)}.*')):
+        return stem
+    index = 1
+    while any(directory.glob(f'{glob_escape(f"{stem} ({index})")}.*')):
+        index += 1
+    return f'{stem} ({index})'
+
+
+def glob_escape(value: str) -> str:
+    """Escape glob metacharacters so a stem containing [, ], *, or ? is
+    matched literally by Path.glob."""
+    return re.sub(r'([\[\]*?])', r'[\1]', value)

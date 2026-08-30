@@ -36,6 +36,18 @@ class DownloadEngine(StrEnum):
     INSTALOADER = 'instaloader'
 
 
+class ConflictStrategy(StrEnum):
+    """What to do when the target file already exists.
+
+    SKIP is the default and matches yt-dlp's own behaviour (don't re-download
+    or clobber). OVERWRITE replaces it. RENAME writes a " (N)"-suffixed copy.
+    """
+
+    SKIP = 'skip'
+    OVERWRITE = 'overwrite'
+    RENAME = 'rename'
+
+
 @dataclass(frozen=True, slots=True)
 class MediaOptions:
     """Optional per-download media choices that only apply to standard
@@ -56,6 +68,11 @@ class MediaOptions:
     # yt-dlp's format sorting rather than a hard filter, so a source with a
     # single track is unaffected.
     audio_language: str | None = None
+    # What to do when the output file already exists. A file-write concern
+    # rather than a media one, but grouped here so it rides the same
+    # create/download channel. Applied to standard (yt-dlp) downloads;
+    # captured downloads already rename on conflict.
+    conflict_strategy: ConflictStrategy = ConflictStrategy.SKIP
 
 
 @dataclass(slots=True)
