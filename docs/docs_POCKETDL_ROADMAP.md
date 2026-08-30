@@ -1287,21 +1287,31 @@ by build + typecheck + reading only (no browser automation here).
 - WebSocket/SSE progress instead of polling (Phase 6) — **done** in Round 8
   of the Phase 5 pilot (the SSE stream replaced the 2s poll).
 
-## Medium-term
-- Storage/disk-usage dashboard with a per-platform breakdown and cleanup
-  suggestions. Not previously listed — becomes more important once
-  multi-platform full-profile downloads (Phase 5) can fill phone storage
-  quickly.
+## Product-polish Round 2 — done (branch feature/product-polish-enhancements → merged, then round2 branch)
+Four items, backend test-covered; all UI verified by build + typecheck +
+reading only (no browser automation here).
+- **Rate-limit-aware messaging — done.** Broader classification (429 status
+  line + body phrasings like Instagram's "please wait a few minutes",
+  "temporarily blocked") and actionable per-category guidance under a failed
+  download; the rate-limited one advises *waiting*. Deliberately does **not**
+  auto-retry against the platform (that risks worsening a limit / an account
+  restriction) — the user retries manually.
+- **Saved download presets — done.** `DownloadPreset` model + repo +
+  `GET/POST/DELETE /api/presets`; the form exposes the performance knobs
+  (concurrent fragments, retries, aria2) and an Apply/Save/Delete preset UI.
+  A preset never stores a format_id (URL-specific).
+- **Storage / disk-usage dashboard — done.** `GET /api/storage` scans the
+  download dir in a worker thread → total used, free/total disk, per-folder
+  breakdown; a collapsible panel scans on first expand (not on any poll).
+- **Import/export — done.** `GET /api/export` / `POST /api/import` round-trip
+  settings + presets + playlists(+items) as one JSON bundle; import is
+  additive and idempotent, and applies the download directory only if valid
+  on the importing machine.
+
+## Medium-term (remaining)
 - Wi-Fi-only download gating. Not previously listed — guards mobile data
   usage; checkable client-side via the Network Information API before a
   job is submitted, no backend change needed.
-- Import/export settings and history (Phase 6 backlog) — cheap insurance
-  before a phone reset or reinstall.
-- Saved per-platform download presets (Phase 6 backlog) — e.g. "Instagram
-  Reel -> best MP4" as one tap instead of reselecting quality every time.
-- Rate-limit-aware retry messaging — surface "rate limited by <platform>,
-  retrying in Xm" instead of an opaque failure. Grows more important as
-  Phase 5 adds platforms that rate-limit harder than YouTube does.
 
 ## Later, needs its own security pass first
 - Local network access beyond localhost (backlog item; this doc's
