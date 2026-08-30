@@ -6,7 +6,16 @@ import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
+import {
+  collectionsThatCompleted,
+  completionMap,
+  downloadsThatFinished,
+  statusMap,
+  type StatusMap,
+} from './lib/notifications';
 import './styles.css';
+
+const NOTIFICATIONS_STORAGE_KEY = 'pocketdl.notifications';
 
 /** Structural equality by serialisation. The payloads here are small,
  * JSON-derived, and compared once per pushed frame, so this is cheaper than
@@ -38,6 +47,13 @@ export default function App() {
   const [updating, setUpdating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === 'on';
+    } catch {
+      return false;
+    }
+  });
 
   // The 2s poll and user actions (delete, cancel, ...) both call refresh(),
   // so calls can be in flight concurrently. Without this guard, a poll that
@@ -152,6 +168,68 @@ export default function App() {
     url.searchParams.delete('capture');
     window.history.replaceState(null, '', url.toString());
   }, [captures]);
+
+  // Fire a desktop notification when a download or a whole playlist finishes,
+  // if the user opted in and granted permission. The detection is pure and
+  // tested (lib/notifications); here we only diff each incoming snapshot
+  // against the previous one. The refs seed silently on first paint so an
+  // app opened with already-finished items doesn't fire a burst.
+  const prevDownloadStatuses = useRef<StatusMap>(new Map());
+  const downloadsSeeded = useRef(false);
+  const prevCollectionCompletion = useRef<Map<string, boolean>>(new Map());
+  const collectionsSeeded = useRef(false);
+
+  const notify = useCallback((title: string, body: string) => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      new Notification(title, { body });
+    } catch {
+      // Some browsers throw if constructed outside a service worker; ignore.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (downloadsSeeded.current && notificationsEnabled) {
+      for (const finished of downloadsThatFinished(prevDownloadStatuses.current, downloads)) {
+        const job = downloads.find((item) => item.id === finished.id);
+        const label = job?.title || job?.filename || job?.url || 'Download';
+        notify(finished.status === 'completed' ? 'Download complete' : 'Download failed', label);
+      }
+    }
+    prevDownloadStatuses.current = statusMap(downloads);
+    downloadsSeeded.current = true;
+  }, [downloads, notificationsEnabled, notify]);
+
+  useEffect(() => {
+    if (collectionsSeeded.current && notificationsEnabled) {
+      for (const done of collectionsThatCompleted(prevCollectionCompletion.current, collections)) {
+        notify('Playlist complete', `${done.name} — ${done.item_count} item(s)`);
+      }
+    }
+    prevCollectionCompletion.current = completionMap(collections);
+    collectionsSeeded.current = true;
+  }, [collections, notificationsEnabled, notify]);
+
+  async function toggleNotifications() {
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      try { localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, 'off'); } catch { /* ignore */ }
+      return;
+    }
+    if (typeof Notification === 'undefined') {
+      setMessage('Notifications are not supported in this browser.');
+      return;
+    }
+    let permission = Notification.permission;
+    if (permission === 'default') permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      setMessage('Notification permission was not granted.');
+      return;
+    }
+    setNotificationsEnabled(true);
+    try { localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, 'on'); } catch { /* ignore */ }
+    setMessage('You’ll be notified when downloads finish.');
+  }
 
   async function addDownload(payload: DownloadCreateRequest) {
     await api.createDownload(payload);
@@ -338,6 +416,9 @@ export default function App() {
           <span className="section-chevron">−</span>
         </summary>
         <div className="section-toolbar-actions">
+          <button className="secondary compact" onClick={() => void toggleNotifications()}>
+            {notificationsEnabled ? 'Notifications: on' : 'Notify when done'}
+          </button>
           <button className="secondary compact" disabled={updating} onClick={updateYtDlp}>
             {updating ? 'Updating…' : 'Update yt-dlp'}
           </button>
