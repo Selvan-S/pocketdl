@@ -80,24 +80,37 @@ class CapturedMediaService:
         headers: str,
         user_agent: str | None,
         audio_url: str | None = None,
+        subtitle_url: str | None = None,
     ) -> list[str]:
         args = ['ffmpeg', '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning']
         args += CapturedMediaService._input_args(url, headers, user_agent)
+        # Input indices: video is 0. A separate audio rendition (if any) is
+        # next, then a subtitle rendition (if any). Track them so the -map
+        # arguments reference the right inputs.
+        next_input = 1
+        maps = ['-map', '0:v:0?']
         if audio_url:
             # A specific HLS quality whose master lists audio as a separate
             # #EXT-X-MEDIA rendition: the variant playlist carries video only,
             # so downloading it alone would produce a silent file. Mux the
             # rendition in as a second input.
             args += CapturedMediaService._input_args(audio_url, headers, user_agent)
-            args += ['-map', '0:v:0?', '-map', '1:a:0?']
+            maps += ['-map', f'{next_input}:a:0?']
+            next_input += 1
         else:
-            args += ['-map', '0:v:0?', '-map', '0:a:0?']
-        args += [
-            '-c', 'copy',
-            '-movflags', '+faststart',
-            '-progress', 'pipe:1',
-            str(output_path),
-        ]
+            maps += ['-map', '0:a:0?']
+        codec_args = ['-c', 'copy', '-movflags', '+faststart']
+        if subtitle_url:
+            # HLS subtitles are a separate #EXT-X-MEDIA:TYPE=SUBTITLES playlist
+            # (usually WebVTT). Add it as its own input and convert to mov_text
+            # so it embeds in the mp4 container.
+            args += CapturedMediaService._input_args(subtitle_url, headers, user_agent)
+            maps += ['-map', f'{next_input}:s:0?']
+            codec_args += ['-c:s', 'mov_text']
+            next_input += 1
+        args += maps
+        args += codec_args
+        args += ['-progress', 'pipe:1', str(output_path)]
         return args
 
     async def _probe_duration(self, url: str, context: RequestContext) -> int | None:
@@ -133,6 +146,7 @@ class CapturedMediaService:
         retries: int,
         on_progress: ProgressCallback,
         audio_url: str | None = None,
+        subtitle_url: str | None = None,
     ) -> DownloadJob:
         job.status = DownloadStatus.RUNNING
         job.started_at = datetime.now(timezone.utc)
@@ -154,7 +168,7 @@ class CapturedMediaService:
         return_code = 1
 
         for attempt_number in range(1, max_attempts + 1):
-            args = self._build_ffmpeg_args(job.url, output_path, headers, context.user_agent, audio_url)
+            args = self._build_ffmpeg_args(job.url, output_path, headers, context.user_agent, audio_url, subtitle_url)
 
             process = await asyncio.create_subprocess_exec(
                 *args,

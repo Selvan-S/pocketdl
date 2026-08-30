@@ -299,6 +299,7 @@ class YtDlpService:
         audio_url: str | None = None,
         collection_item_id: str | None = None,
         media_options: MediaOptions = MediaOptions(),
+        subtitle_url: str | None = None,
     ) -> DownloadJob:
         if job.engine is DownloadEngine.GALLERY_DL:
             return await self.gallery_dl.download(
@@ -325,6 +326,7 @@ class YtDlpService:
                 retries=retries,
                 on_progress=on_progress,
                 audio_url=audio_url,
+                subtitle_url=subtitle_url,
             )
 
         job.status = DownloadStatus.RUNNING

@@ -43,6 +43,7 @@ class Downloader(Protocol):
         collection_item_id: str | None,
         media_options: MediaOptions,
         on_progress: ProgressCallback,
+        subtitle_url: str | None,
     ) -> DownloadJob: ...
 
     async def cancel(self, job_id: str) -> None: ...

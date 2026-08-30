@@ -117,6 +117,57 @@ def _audio_renditions(lines: list[str], base_url: str) -> dict[str, str]:
     return renditions
 
 
+@dataclass(frozen=True, slots=True)
+class SubtitleRendition:
+    """One ``#EXT-X-MEDIA:TYPE=SUBTITLES`` track from a master playlist."""
+
+    url: str
+    language: str | None
+    name: str | None
+    is_default: bool
+
+
+def parse_subtitle_renditions(text: str, base_url: str) -> list[SubtitleRendition]:
+    """Subtitle tracks advertised by a master playlist, in file order.
+
+    Empty for a media playlist or one with no subtitle renditions -- most
+    captures have none, and that is not an error."""
+    renditions: list[SubtitleRendition] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.upper().startswith(_MEDIA_TAG):
+            continue
+        attributes = parse_attributes(stripped.split(':', 1)[-1])
+        if attributes.get('TYPE', '').upper() != 'SUBTITLES':
+            continue
+        uri = attributes.get('URI')
+        if not uri:
+            continue
+        renditions.append(SubtitleRendition(
+            url=urljoin(base_url, uri),
+            language=attributes.get('LANGUAGE') or None,
+            name=attributes.get('NAME') or None,
+            is_default=attributes.get('DEFAULT', '').upper() == 'YES',
+        ))
+    return renditions
+
+
+def pick_subtitle_rendition(renditions: list[SubtitleRendition], language: str | None) -> SubtitleRendition | None:
+    """Choose a subtitle track: an exact/prefix language match if a language
+    was asked for, else the default track, else the first one."""
+    if not renditions:
+        return None
+    if language:
+        wanted = language.lower()
+        for rendition in renditions:
+            if rendition.language and rendition.language.lower().startswith(wanted):
+                return rendition
+    for rendition in renditions:
+        if rendition.is_default:
+            return rendition
+    return renditions[0]
+
+
 def parse_master_playlist(text: str, base_url: str) -> list[VariantStream]:
     """Parse the variant streams of a master playlist.
 
