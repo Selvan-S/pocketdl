@@ -259,6 +259,13 @@ export interface CollectionDownloadRequest {
   retries?: number;
 }
 
+export interface UpdateCheck {
+  current: string | null;
+  latest: string | null;
+  update_available: boolean;
+  error: string | null;
+}
+
 export interface ImportResult {
   imported_presets: number;
   imported_collections: number;

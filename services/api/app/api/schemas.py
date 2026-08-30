@@ -119,6 +119,13 @@ class DownloadResponse(BaseModel):
     capture_id: str | None
 
 
+class UpdateCheckResponse(BaseModel):
+    current: str | None
+    latest: str | None
+    update_available: bool
+    error: str | None = None
+
+
 class SystemStatusResponse(BaseModel):
     app_version: str
     yt_dlp_version: str | None

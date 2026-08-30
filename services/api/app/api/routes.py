@@ -44,6 +44,7 @@ from .schemas import (
     ProfileItemPreviewResponse,
     StorageUsageResponse,
     SystemStatusResponse,
+    UpdateCheckResponse,
     SettingsResponse,
     SettingsUpdateRequest,
 )
@@ -53,6 +54,7 @@ from ..core.path_settings import normalize_download_directory
 from ..core.platform import DirectoryPickerUnavailable, browse_for_directory, open_directory
 from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
 from ..infrastructure.storage import scan_storage
+from ..infrastructure.updates import check_yt_dlp_update
 from ..core.settings_store import clear_download_directory, save_download_directory
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
 from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
@@ -726,6 +728,19 @@ async def system_status(request: Request) -> SystemStatusResponse:
         download_directory=str(request.app.state.settings.download_directory),
         active_downloads=sum(1 for x in jobs if x.status is DownloadStatus.RUNNING),
         queued_downloads=sum(1 for x in jobs if x.status is DownloadStatus.QUEUED),
+    )
+
+
+@router.get('/system/update-check', response_model=UpdateCheckResponse)
+async def check_update(request: Request) -> UpdateCheckResponse:
+    """Whether a newer yt-dlp is on PyPI. Makes an external request, so it is
+    fetched on demand by the UI (never polled) and degrades to
+    update_available=False on any network error rather than failing."""
+    versions = await request.app.state.downloader.versions()
+    status = await asyncio.to_thread(check_yt_dlp_update, versions.get('yt_dlp'))
+    return UpdateCheckResponse(
+        current=status.current, latest=status.latest,
+        update_available=status.update_available, error=status.error,
     )
 
 

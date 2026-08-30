@@ -6,7 +6,7 @@ import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { StoragePanel } from './components/StoragePanel';
-import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, DownloadPreset, DownloadPresetCreateRequest, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
+import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, DownloadPreset, DownloadPresetCreateRequest, ServerStateEvent, SettingsResponse, SystemStatus, UpdateCheck } from './types/api';
 import {
   collectionsThatCompleted,
   completionMap,
@@ -49,6 +49,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [presets, setPresets] = useState<DownloadPreset[]>([]);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === 'on';
@@ -246,6 +248,12 @@ export default function App() {
 
   useEffect(() => { void refreshPresets(); }, [refreshPresets]);
 
+  // One-shot yt-dlp update check on load (an external PyPI request, so never
+  // polled). Best-effort — a failure just leaves the banner hidden.
+  useEffect(() => {
+    api.checkUpdate().then(setUpdateInfo).catch(() => undefined);
+  }, []);
+
   async function savePreset(payload: DownloadPresetCreateRequest) {
     try {
       await api.createPreset(payload);
@@ -295,6 +303,8 @@ export default function App() {
       const result = await api.updateYtDlp();
       setMessage(`yt-dlp updated: ${result.version ?? 'unknown'}`);
       await refresh();
+      // Re-check so the "update available" banner reflects the new version.
+      api.checkUpdate().then(setUpdateInfo).catch(() => undefined);
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : 'Update failed');
     } finally {
@@ -400,6 +410,18 @@ export default function App() {
           <button className="secondary compact" onClick={() => setSettingsOpen((value) => !value)}>{settingsOpen ? 'Close settings' : 'Settings'}</button>
         </div>
       </header>
+
+      {updateInfo?.update_available && !updateDismissed && (
+        <div className="update-banner" role="status">
+          <span>yt-dlp {updateInfo.latest} is available — you have {updateInfo.current ?? 'an unknown version'}.</span>
+          <div className="update-banner-actions">
+            <button className="secondary compact" disabled={updating} onClick={updateYtDlp}>
+              {updating ? 'Updating…' : 'Update now'}
+            </button>
+            <button className="link-button" onClick={() => setUpdateDismissed(true)}>Dismiss</button>
+          </div>
+        </div>
+      )}
 
       {settingsOpen && settings && (
         <SettingsPanel
