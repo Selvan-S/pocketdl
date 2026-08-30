@@ -159,6 +159,24 @@ export default function App() {
     await refresh();
   }
 
+  async function addDownloadBatch(payloads: DownloadCreateRequest[]) {
+    let added = 0;
+    const failed: string[] = [];
+    // Sequential rather than Promise.all: the queue accepts them instantly
+    // (it dispatches its own workers), and one bad URL shouldn't abort the
+    // rest. Refresh once at the end instead of per item.
+    for (const payload of payloads) {
+      try {
+        await api.createDownload(payload);
+        added += 1;
+      } catch {
+        failed.push(payload.url);
+      }
+    }
+    setMessage(failed.length === 0 ? `Queued ${added} download(s).` : `Queued ${added}, ${failed.length} failed.`);
+    await refresh();
+  }
+
   async function updateYtDlp() {
     setUpdating(true);
     try {
@@ -258,6 +276,7 @@ export default function App() {
         </div>
         <DownloadForm
           onSubmit={addDownload}
+          onSubmitBatch={addDownloadBatch}
           onAnalyze={(payload): Promise<AnalyzeResponse> => api.analyze(payload)}
         />
         {message && <div className="message" role="status">{message}</div>}

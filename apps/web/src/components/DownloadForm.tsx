@@ -4,10 +4,20 @@ import { AnalyzeResult } from './AnalyzeResult';
 
 interface Props {
   onSubmit: (payload: DownloadCreateRequest) => Promise<void>;
+  /** Queue several URLs at once (one per line in the URL box). Separate from
+   * onSubmit because per-URL filename and format selection don't apply to a
+   * batch -- each item derives its own. */
+  onSubmitBatch: (payloads: DownloadCreateRequest[]) => Promise<void>;
   onAnalyze: (payload: { url: string; request_context: DownloadCreateRequest['request_context'] }) => Promise<AnalyzeResponse>;
 }
 
-export function DownloadForm({ onSubmit, onAnalyze }: Props) {
+/** Split the URL box into distinct, trimmed, non-empty lines. One line is a
+ * normal single download; more than one triggers batch mode. */
+export function parseUrls(raw: string): string[] {
+  return Array.from(new Set(raw.split('\n').map((line) => line.trim()).filter(Boolean)));
+}
+
+export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze }: Props) {
   const [url, setUrl] = useState('');
   const [filename, setFilename] = useState('');
   const [preset, setPreset] = useState<DownloadCreateRequest['preset']>('best');
@@ -44,22 +54,40 @@ export function DownloadForm({ onSubmit, onAnalyze }: Props) {
     }
   }
 
+  const urls = parseUrls(url);
+  const isBatch = urls.length > 1;
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!url.trim()) return;
+    if (urls.length === 0) return;
     setBusy(true);
     try {
-      const payload: DownloadCreateRequest = {
-        url: url.trim(),
-        preset,
-        concurrent_fragments: 8,
-        retries: 10,
-        use_aria2: false,
-        request_context: requestContext(),
-      };
-      if (filename.trim()) payload.filename = filename.trim();
-      if (formatId) payload.format_id = formatId;
-      await onSubmit(payload);
+      if (isBatch) {
+        // Batch: preset + request context apply to every URL; filename and
+        // format_id are single-item concerns and deliberately skipped.
+        await onSubmitBatch(
+          urls.map((one) => ({
+            url: one,
+            preset,
+            concurrent_fragments: 8,
+            retries: 10,
+            use_aria2: false,
+            request_context: requestContext(),
+          })),
+        );
+      } else {
+        const payload: DownloadCreateRequest = {
+          url: urls[0],
+          preset,
+          concurrent_fragments: 8,
+          retries: 10,
+          use_aria2: false,
+          request_context: requestContext(),
+        };
+        if (filename.trim()) payload.filename = filename.trim();
+        if (formatId) payload.format_id = formatId;
+        await onSubmit(payload);
+      }
       setUrl('');
       setFilename('');
       setAnalysis(null);
@@ -71,25 +99,31 @@ export function DownloadForm({ onSubmit, onAnalyze }: Props) {
 
   return (
     <form className="download-form" onSubmit={handleSubmit}>
-      <label htmlFor="url">Video URL</label>
+      <label htmlFor="url">Video URL <span className="hint">(one per line to queue several)</span></label>
       <textarea
         id="url"
         value={url}
         onChange={(event) => setUrl(event.target.value)}
-        placeholder="Paste a video page or m3u8 URL"
+        placeholder="Paste a video page or m3u8 URL — or several, one per line"
         rows={3}
         autoCapitalize="none"
         autoCorrect="off"
       />
 
       <div className="action-row">
-        <button type="button" className="secondary" disabled={analyzing || busy || !url.trim()} onClick={handleAnalyze}>
+        <button type="button" className="secondary" disabled={analyzing || busy || urls.length !== 1} onClick={handleAnalyze}>
           {analyzing ? 'Analyzing…' : 'Analyze'}
         </button>
-        <button disabled={busy || analyzing || !url.trim()} type="submit">
-          {busy ? 'Adding…' : 'Download'}
+        <button disabled={busy || analyzing || urls.length === 0} type="submit">
+          {busy ? 'Adding…' : isBatch ? `Download ${urls.length}` : 'Download'}
         </button>
       </div>
+      {isBatch && (
+        <div className="field-help">
+          {urls.length} URLs detected — they&apos;ll be queued at the preset above. File name and format
+          selection apply to a single URL only and are skipped in batch mode.
+        </div>
+      )}
 
       <label htmlFor="filename">File name <span className="hint">(optional)</span></label>
       <input
