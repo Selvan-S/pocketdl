@@ -427,3 +427,53 @@ class CollectionDownloadRequest(BaseModel):
     preset: Literal['best', '1080p', '720p', 'audio'] = 'best'
     concurrent_fragments: int = Field(default=8, ge=1, le=32)
     retries: int = Field(default=10, ge=1, le=100)
+
+
+# --- Import / export bundle (product-polish Round 2) ------------------------
+
+class SettingsExport(BaseModel):
+    download_directory: str | None = None
+
+
+class PresetExport(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    preset: Literal['best', '1080p', '720p', '480p', 'audio'] = 'best'
+    concurrent_fragments: int = Field(default=8, ge=1, le=32)
+    retries: int = Field(default=10, ge=1, le=100)
+    use_aria2: bool = False
+
+
+class CollectionItemExport(BaseModel):
+    source_url: str = Field(max_length=2000)
+    content_type: Literal['post', 'carousel', 'reel', 'story', 'highlight']
+    author_username: str | None = Field(default=None, max_length=200)
+    profile_username: str | None = Field(default=None, max_length=200)
+    caption: str | None = Field(default=None, max_length=5000)
+    thumbnail_url: str | None = Field(default=None, max_length=2000)
+    external_id: str | None = Field(default=None, max_length=200)
+    posted_at: datetime | None = None
+
+
+class CollectionExport(BaseModel):
+    platform: Literal['instagram'] = 'instagram'
+    name: str = Field(min_length=1, max_length=200)
+    items: list[CollectionItemExport] = Field(default_factory=list)
+
+
+class ExportBundle(BaseModel):
+    """The full backup/restore document. Doubles as the import request body;
+    pydantic ignores unknown fields, so a newer export stays loadable."""
+
+    pocketdl_export_version: int = 1
+    exported_at: datetime | None = None
+    settings: SettingsExport | None = None
+    presets: list[PresetExport] = Field(default_factory=list)
+    collections: list[CollectionExport] = Field(default_factory=list)
+
+
+class ImportResultResponse(BaseModel):
+    imported_presets: int
+    imported_collections: int
+    imported_items: int
+    settings_applied: bool
+    notes: list[str] = Field(default_factory=list)

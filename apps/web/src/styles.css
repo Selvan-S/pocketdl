@@ -205,6 +205,9 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .settings-actions button { min-height: 40px; }
 .settings-default { color: #66738d; font-size: 11px; overflow-wrap: anywhere; }
+.settings-subsection { margin-top: 6px; padding-top: 12px; border-top: 1px solid #202b44; }
+.file-button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border-radius: 10px; cursor: pointer; font-weight: 600; }
+.file-button input[type="file"] { display: none; }
 .settings-panel code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #bbc6dd; }
 .capture-card { background: #101729; border: 1px solid #202b44; color: #e8ecf7; box-shadow: 0 10px 24px rgba(0,0,0,.16); }
 .capture-card-header h3 { color: #e8ecf7; }

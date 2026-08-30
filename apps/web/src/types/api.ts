@@ -249,6 +249,14 @@ export interface CollectionDownloadRequest {
   retries?: number;
 }
 
+export interface ImportResult {
+  imported_presets: number;
+  imported_collections: number;
+  imported_items: number;
+  settings_applied: boolean;
+  notes: string[];
+}
+
 export interface FolderUsage {
   name: string;
   bytes: number;

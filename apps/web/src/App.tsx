@@ -329,6 +329,40 @@ export default function App() {
     }
   }
 
+  async function exportBackup() {
+    try {
+      const bundle = await api.exportData();
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `pocketdl-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setMessage('Exported a backup file.');
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to export backup');
+    }
+  }
+
+  async function importBackup(file: File) {
+    try {
+      const bundle: unknown = JSON.parse(await file.text());
+      const result = await api.importData(bundle);
+      const parts = [
+        `${result.imported_presets} preset(s)`,
+        `${result.imported_collections} playlist(s)`,
+        `${result.imported_items} item(s)`,
+      ];
+      setMessage(`Imported ${parts.join(', ')}.${result.notes.length ? ` ${result.notes.join(' ')}` : ''}`);
+      await Promise.all([refresh(), refreshPresets()]);
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? `Import failed: ${error.message}` : 'Import failed: invalid file');
+    }
+  }
+
   async function openFolder() {
     setSettingsBusy(true);
     try {
@@ -374,6 +408,8 @@ export default function App() {
           onReset={resetSettings}
           onOpen={openFolder}
           onBrowse={browseDownloadDirectory}
+          onExport={exportBackup}
+          onImport={importBackup}
           busy={settingsBusy}
         />
       )}

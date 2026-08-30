@@ -30,8 +30,14 @@ from .schemas import (
     DownloadPresetCreateRequest,
     DownloadPresetResponse,
     DownloadResponse,
+    CollectionExport,
+    CollectionItemExport,
+    ExportBundle,
     FolderUsageResponse,
+    ImportResultResponse,
     InstagramProfilePreviewRequest,
+    PresetExport,
+    SettingsExport,
     InstagramProfilePreviewResponse,
     InstagramSessionRequest,
     InstagramSessionStatusResponse,
@@ -578,6 +584,125 @@ async def storage_usage(request: Request) -> StorageUsageResponse:
         free_bytes=usage.free_bytes,
         disk_total_bytes=usage.disk_total_bytes,
         folders=[FolderUsageResponse(name=f.name, bytes=f.bytes, file_count=f.file_count) for f in usage.folders],
+    )
+
+
+# The bundle format version. Bump only on a breaking shape change; import
+# tolerates unknown fields, so additive changes don't need it.
+_EXPORT_VERSION = 1
+
+
+@router.get('/export', response_model=ExportBundle)
+async def export_data(request: Request) -> ExportBundle:
+    """A single JSON backup of settings, saved presets, and playlists (with
+    their items) -- cheap insurance before a phone reset or reinstall."""
+    settings = request.app.state.settings
+    presets = await request.app.state.preset_repository.list()
+    service: CollectionService = request.app.state.collection_service
+    collections = await service.list_collections()
+
+    collection_exports: list[CollectionExport] = []
+    for collection in collections:
+        items = await service.list_items(collection.id)
+        collection_exports.append(CollectionExport(
+            platform=collection.platform.value,
+            name=collection.name,
+            items=[
+                CollectionItemExport(
+                    source_url=item.source_url, content_type=item.content_type,
+                    author_username=item.author_username, profile_username=item.profile_username,
+                    caption=item.caption, thumbnail_url=item.thumbnail_url,
+                    external_id=item.external_id, posted_at=item.posted_at,
+                )
+                for item in items
+            ],
+        ))
+
+    return ExportBundle(
+        pocketdl_export_version=_EXPORT_VERSION,
+        exported_at=datetime.now(timezone.utc),
+        settings=SettingsExport(download_directory=str(settings.download_directory)),
+        presets=[
+            PresetExport(
+                name=preset.name, preset=preset.preset, concurrent_fragments=preset.concurrent_fragments,
+                retries=preset.retries, use_aria2=preset.use_aria2,
+            )
+            for preset in presets
+        ],
+        collections=collection_exports,
+    )
+
+
+@router.post('/import', response_model=ImportResultResponse)
+async def import_data(bundle: ExportBundle, request: Request) -> ImportResultResponse:
+    """Restore a bundle produced by /export. Additive and idempotent: a
+    preset whose name already exists is skipped, a playlist is matched by
+    (platform, name) and its items de-duplicated by content, so re-importing
+    the same file changes nothing. The download directory is applied only if
+    it's valid on this machine (paths differ across devices)."""
+    notes: list[str] = []
+    if bundle.pocketdl_export_version != _EXPORT_VERSION:
+        notes.append(
+            f'Bundle version {bundle.pocketdl_export_version} differs from this build ({_EXPORT_VERSION}); '
+            'imported on a best-effort basis.'
+        )
+
+    preset_repository = request.app.state.preset_repository
+    existing_preset_names = {preset.name for preset in await preset_repository.list()}
+    imported_presets = 0
+    for preset in bundle.presets:
+        if preset.name in existing_preset_names:
+            continue
+        await preset_repository.add(DownloadPreset(
+            id=uuid.uuid4().hex, name=preset.name[:100], preset=preset.preset,
+            concurrent_fragments=preset.concurrent_fragments, retries=preset.retries,
+            use_aria2=preset.use_aria2, created_at=datetime.now(timezone.utc),
+        ))
+        existing_preset_names.add(preset.name)
+        imported_presets += 1
+
+    service: CollectionService = request.app.state.collection_service
+    by_key = {(c.platform.value, c.name): c for c in await service.list_collections()}
+    imported_collections = 0
+    imported_items = 0
+    for collection_export in bundle.collections:
+        key = (collection_export.platform, collection_export.name)
+        target = by_key.get(key)
+        if target is None:
+            target = await service.create_collection(Platform(collection_export.platform), collection_export.name)
+            by_key[key] = target
+            imported_collections += 1
+        previews = [
+            ProfileItemPreview(
+                source_url=item.source_url, content_type=item.content_type,
+                author_username=item.author_username, profile_username=item.profile_username,
+                caption=item.caption, thumbnail_url=item.thumbnail_url,
+                external_id=item.external_id, posted_at=item.posted_at,
+            )
+            for item in collection_export.items
+        ]
+        added, _already = await service.add_items(target.id, previews)
+        imported_items += added
+
+    settings_applied = False
+    if bundle.settings and bundle.settings.download_directory:
+        try:
+            directory = normalize_download_directory(bundle.settings.download_directory)
+        except ValueError:
+            notes.append('The download directory in the bundle is not valid on this machine and was left unchanged.')
+        else:
+            settings = request.app.state.settings
+            settings.download_directory = directory
+            request.app.state.captured_media.download_directory = directory
+            save_download_directory(settings.database_path, directory)
+            settings_applied = True
+
+    return ImportResultResponse(
+        imported_presets=imported_presets,
+        imported_collections=imported_collections,
+        imported_items=imported_items,
+        settings_applied=settings_applied,
+        notes=notes,
     )
 
 
