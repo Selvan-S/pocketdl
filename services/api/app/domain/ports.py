@@ -6,6 +6,7 @@ from .analyzer import MediaAnalysis
 from .captures import CaptureVariant, CapturedSource
 from .collections import Collection, CollectionItem
 from .models import DownloadJob, DownloadSourceType, RequestContext
+from .presets import DownloadPreset
 
 ProgressCallback = Callable[[DownloadJob], Awaitable[None]]
 
@@ -82,3 +83,10 @@ class CollectionRepository(Protocol):
     async def update_item_metadata(
         self, item_id: str, *, caption: str | None, posted_at: datetime | None,
     ) -> None: ...
+
+
+class DownloadPresetRepository(Protocol):
+    async def add(self, preset: DownloadPreset) -> DownloadPreset: ...
+    async def list(self) -> list[DownloadPreset]: ...
+    async def get(self, preset_id: str) -> DownloadPreset | None: ...
+    async def delete(self, preset_id: str) -> None: ...

@@ -5,7 +5,8 @@ import { DownloadList } from './components/DownloadList';
 import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
-import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
+import { StoragePanel } from './components/StoragePanel';
+import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, DownloadPreset, DownloadPresetCreateRequest, ServerStateEvent, SettingsResponse, SystemStatus } from './types/api';
 import {
   collectionsThatCompleted,
   completionMap,
@@ -47,6 +48,7 @@ export default function App() {
   const [updating, setUpdating] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [presets, setPresets] = useState<DownloadPreset[]>([]);
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === 'on';
@@ -231,6 +233,38 @@ export default function App() {
     setMessage('You’ll be notified when downloads finish.');
   }
 
+  // Presets change only on an explicit user action, so they are fetched on
+  // mount and re-fetched after a save/delete rather than riding the 2s poll
+  // or the SSE snapshot.
+  const refreshPresets = useCallback(async () => {
+    try {
+      setPresets(await api.listPresets());
+    } catch {
+      // Non-critical: the form just won't offer saved presets this session.
+    }
+  }, []);
+
+  useEffect(() => { void refreshPresets(); }, [refreshPresets]);
+
+  async function savePreset(payload: DownloadPresetCreateRequest) {
+    try {
+      await api.createPreset(payload);
+      setMessage(`Saved preset “${payload.name}”.`);
+      await refreshPresets();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to save preset');
+    }
+  }
+
+  async function deletePreset(id: string) {
+    try {
+      await api.deletePreset(id);
+      await refreshPresets();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to delete preset');
+    }
+  }
+
   async function addDownload(payload: DownloadCreateRequest) {
     await api.createDownload(payload);
     setMessage('Added to queue.');
@@ -295,6 +329,40 @@ export default function App() {
     }
   }
 
+  async function exportBackup() {
+    try {
+      const bundle = await api.exportData();
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `pocketdl-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setMessage('Exported a backup file.');
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to export backup');
+    }
+  }
+
+  async function importBackup(file: File) {
+    try {
+      const bundle: unknown = JSON.parse(await file.text());
+      const result = await api.importData(bundle);
+      const parts = [
+        `${result.imported_presets} preset(s)`,
+        `${result.imported_collections} playlist(s)`,
+        `${result.imported_items} item(s)`,
+      ];
+      setMessage(`Imported ${parts.join(', ')}.${result.notes.length ? ` ${result.notes.join(' ')}` : ''}`);
+      await Promise.all([refresh(), refreshPresets()]);
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? `Import failed: ${error.message}` : 'Import failed: invalid file');
+    }
+  }
+
   async function openFolder() {
     setSettingsBusy(true);
     try {
@@ -340,6 +408,8 @@ export default function App() {
           onReset={resetSettings}
           onOpen={openFolder}
           onBrowse={browseDownloadDirectory}
+          onExport={exportBackup}
+          onImport={importBackup}
           busy={settingsBusy}
         />
       )}
@@ -356,6 +426,9 @@ export default function App() {
           onSubmit={addDownload}
           onSubmitBatch={addDownloadBatch}
           onAnalyze={(payload): Promise<AnalyzeResponse> => api.analyze(payload)}
+          presets={presets}
+          onSavePreset={savePreset}
+          onDeletePreset={deletePreset}
         />
         {message && <div className="message" role="status">{message}</div>}
       </section>
@@ -448,6 +521,8 @@ export default function App() {
           }}
         />
       </details>
+
+      <StoragePanel />
 
       <footer>
         <span className="footer-path">Downloads: {settings?.download_directory ?? 'Unavailable'}</span>

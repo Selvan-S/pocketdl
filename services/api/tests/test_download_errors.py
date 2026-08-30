@@ -38,6 +38,14 @@ def test_classifies_gallery_dl_login_redirect() -> None:
     assert classify_download_error('[instagram][error] HTTP redirect to login page (...)') is DownloadErrorCategory.AUTHENTICATION_REQUIRED
 
 
+def test_classifies_rate_limit_status_and_phrasings() -> None:
+    assert classify_download_error('ERROR: HTTP Error 429: Too Many Requests') is DownloadErrorCategory.RATE_LIMITED
+    assert classify_download_error('...status code: 429...') is DownloadErrorCategory.RATE_LIMITED
+    # The Instagram body phrasing observed live against a real session.
+    assert classify_download_error('Please wait a few minutes before you try again.') is DownloadErrorCategory.RATE_LIMITED
+    assert classify_download_error('You are temporarily blocked.') is DownloadErrorCategory.RATE_LIMITED
+
+
 def test_auto_impersonation_retry_only_for_hls_403() -> None:
     context = RequestContext(impersonation=ImpersonationMode.AUTO)
     assert should_retry_with_impersonation(

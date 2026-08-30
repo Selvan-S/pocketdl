@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import type { AnalyzeResponse, DownloadCreateRequest } from '../types/api';
+import type { AnalyzeResponse, DownloadCreateRequest, DownloadPreset, DownloadPresetCreateRequest } from '../types/api';
 import { AnalyzeResult } from './AnalyzeResult';
 
 interface Props {
@@ -9,6 +9,9 @@ interface Props {
    * batch -- each item derives its own. */
   onSubmitBatch: (payloads: DownloadCreateRequest[]) => Promise<void>;
   onAnalyze: (payload: { url: string; request_context: DownloadCreateRequest['request_context'] }) => Promise<AnalyzeResponse>;
+  presets: DownloadPreset[];
+  onSavePreset: (payload: DownloadPresetCreateRequest) => Promise<void>;
+  onDeletePreset: (id: string) => Promise<void>;
 }
 
 /** Split the URL box into distinct, trimmed, non-empty lines. One line is a
@@ -17,10 +20,15 @@ export function parseUrls(raw: string): string[] {
   return Array.from(new Set(raw.split('\n').map((line) => line.trim()).filter(Boolean)));
 }
 
-export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze }: Props) {
+export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSavePreset, onDeletePreset }: Props) {
   const [url, setUrl] = useState('');
   const [filename, setFilename] = useState('');
   const [preset, setPreset] = useState<DownloadCreateRequest['preset']>('best');
+  const [concurrentFragments, setConcurrentFragments] = useState(8);
+  const [retries, setRetries] = useState(10);
+  const [useAria2, setUseAria2] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [savingPreset, setSavingPreset] = useState(false);
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -57,21 +65,50 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze }: Props) {
   const urls = parseUrls(url);
   const isBatch = urls.length > 1;
 
+  function applyPreset(id: string) {
+    const chosen = presets.find((item) => item.id === id);
+    if (!chosen) return;
+    setPreset(chosen.preset);
+    setConcurrentFragments(chosen.concurrent_fragments);
+    setRetries(chosen.retries);
+    setUseAria2(chosen.use_aria2);
+    // Format_id is URL-specific, so applying a preset clears any earlier pick.
+    setFormatId(null);
+  }
+
+  async function saveCurrentAsPreset() {
+    const name = presetName.trim();
+    if (!name) return;
+    setSavingPreset(true);
+    try {
+      await onSavePreset({
+        name,
+        preset: preset ?? 'best',
+        concurrent_fragments: concurrentFragments,
+        retries,
+        use_aria2: useAria2,
+      });
+      setPresetName('');
+    } finally {
+      setSavingPreset(false);
+    }
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (urls.length === 0) return;
     setBusy(true);
     try {
       if (isBatch) {
-        // Batch: preset + request context apply to every URL; filename and
-        // format_id are single-item concerns and deliberately skipped.
+        // Batch: preset + performance knobs + request context apply to every
+        // URL; filename and format_id are single-item concerns and skipped.
         await onSubmitBatch(
           urls.map((one) => ({
             url: one,
             preset,
-            concurrent_fragments: 8,
-            retries: 10,
-            use_aria2: false,
+            concurrent_fragments: concurrentFragments,
+            retries,
+            use_aria2: useAria2,
             request_context: requestContext(),
           })),
         );
@@ -79,9 +116,9 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze }: Props) {
         const payload: DownloadCreateRequest = {
           url: urls[0],
           preset,
-          concurrent_fragments: 8,
-          retries: 10,
-          use_aria2: false,
+          concurrent_fragments: concurrentFragments,
+          retries,
+          use_aria2: useAria2,
           request_context: requestContext(),
         };
         if (filename.trim()) payload.filename = filename.trim();
@@ -144,6 +181,14 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze }: Props) {
           <option value="480p">Up to 480p</option>
           <option value="audio">Audio only</option>
         </select>
+        {presets.length > 0 && (
+          <select value="" onChange={(event) => { applyPreset(event.target.value); event.target.value = ''; }} aria-label="Apply a saved preset">
+            <option value="">Apply a preset…</option>
+            {presets.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       <button type="button" className="advanced-toggle" onClick={() => setAdvancedOpen((value) => !value)}>
@@ -152,6 +197,40 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze }: Props) {
 
       {advancedOpen && (
         <div className="advanced-panel">
+          <div className="field-help">Performance</div>
+          <div className="row">
+            <label htmlFor="concurrent-fragments">Concurrent fragments
+              <input id="concurrent-fragments" type="number" min={1} max={32} value={concurrentFragments}
+                onChange={(event) => setConcurrentFragments(Math.max(1, Math.min(32, Number(event.target.value) || 1)))} />
+            </label>
+            <label htmlFor="retries">Retries
+              <input id="retries" type="number" min={1} max={100} value={retries}
+                onChange={(event) => setRetries(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} />
+            </label>
+          </div>
+          <label className="checkbox-chip">
+            <input type="checkbox" checked={useAria2} onChange={(event) => setUseAria2(event.target.checked)} />
+            Use aria2 for direct downloads (when available)
+          </label>
+
+          <div className="field-help">Save the current quality + performance settings as a reusable preset.</div>
+          <div className="row">
+            <input value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Preset name" maxLength={100} />
+            <button type="button" className="secondary" disabled={savingPreset || !presetName.trim()} onClick={() => void saveCurrentAsPreset()}>
+              {savingPreset ? 'Saving…' : 'Save as preset'}
+            </button>
+          </div>
+          {presets.length > 0 && (
+            <ul className="preset-list">
+              {presets.map((item) => (
+                <li key={item.id}>
+                  <span>{item.name} <small>({item.preset})</small></span>
+                  <button type="button" className="link-button" onClick={() => void onDeletePreset(item.id)}>Delete</button>
+                </li>
+              ))}
+            </ul>
+          )}
+
           <div className="field-help">Use these when a site needs the same browser request context as the player. Values are sent only to your local PocketDL backend.</div>
           <label htmlFor="page-url">Page URL</label>
           <input id="page-url" value={pageUrl} onChange={(event) => setPageUrl(event.target.value)} placeholder="https://example.com/video-page" />

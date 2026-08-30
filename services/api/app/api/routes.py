@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import uuid
+from datetime import datetime, timezone
 
 from typing import Literal
 
@@ -25,12 +27,22 @@ from .schemas import (
     CollectionRenameRequest,
     CollectionResponse,
     DownloadCreateRequest,
+    DownloadPresetCreateRequest,
+    DownloadPresetResponse,
     DownloadResponse,
+    CollectionExport,
+    CollectionItemExport,
+    ExportBundle,
+    FolderUsageResponse,
+    ImportResultResponse,
     InstagramProfilePreviewRequest,
+    PresetExport,
+    SettingsExport,
     InstagramProfilePreviewResponse,
     InstagramSessionRequest,
     InstagramSessionStatusResponse,
     ProfileItemPreviewResponse,
+    StorageUsageResponse,
     SystemStatusResponse,
     SettingsResponse,
     SettingsUpdateRequest,
@@ -40,11 +52,13 @@ from ..application.collections.service import CollectionService
 from ..core.path_settings import normalize_download_directory
 from ..core.platform import DirectoryPickerUnavailable, browse_for_directory, open_directory
 from ..core.session_store import clear_session_cookie, has_session_cookie, save_session_cookie
+from ..infrastructure.storage import scan_storage
 from ..core.settings_store import clear_download_directory, save_download_directory
 from ..domain.captures import CaptureType, CaptureVariant, is_suspicious_capture
 from ..domain.collections import Collection, CollectionItem, InstagramAuthRequiredError, InstagramContentType, Platform, ProfileItemPreview
 from ..domain.manifests import VariantStream, estimated_size_bytes, quality_label
 from ..domain.models import DownloadSourceType, DownloadStatus, ImpersonationMode, RequestContext
+from ..domain.presets import DownloadPreset
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api')
@@ -259,6 +273,47 @@ async def delete_download(job_id: str, request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=409, detail='Cancel the download before removing it')
     await request.app.state.repository.delete(job_id)
     request.app.state.queue.forget(job_id)
+    return {'ok': True}
+
+
+def preset_response(preset: DownloadPreset) -> DownloadPresetResponse:
+    return DownloadPresetResponse(
+        id=preset.id,
+        name=preset.name,
+        preset=preset.preset,
+        concurrent_fragments=preset.concurrent_fragments,
+        retries=preset.retries,
+        use_aria2=preset.use_aria2,
+        created_at=preset.created_at,
+    )
+
+
+@router.get('/presets', response_model=list[DownloadPresetResponse])
+async def list_presets(request: Request) -> list[DownloadPresetResponse]:
+    presets = await request.app.state.preset_repository.list()
+    return [preset_response(preset) for preset in presets]
+
+
+@router.post('/presets', response_model=DownloadPresetResponse, status_code=status.HTTP_201_CREATED)
+async def create_preset(payload: DownloadPresetCreateRequest, request: Request) -> DownloadPresetResponse:
+    preset = DownloadPreset(
+        id=uuid.uuid4().hex,
+        name=payload.name.strip()[:100],
+        preset=payload.preset,
+        concurrent_fragments=payload.concurrent_fragments,
+        retries=payload.retries,
+        use_aria2=payload.use_aria2,
+        created_at=datetime.now(timezone.utc),
+    )
+    await request.app.state.preset_repository.add(preset)
+    return preset_response(preset)
+
+
+@router.delete('/presets/{preset_id}')
+async def delete_preset(preset_id: str, request: Request) -> dict[str, bool]:
+    if await request.app.state.preset_repository.get(preset_id) is None:
+        raise HTTPException(status_code=404, detail='Preset not found')
+    await request.app.state.preset_repository.delete(preset_id)
     return {'ok': True}
 
 
@@ -511,6 +566,144 @@ async def browse_download_directory(request: Request) -> BrowseDirectoryResponse
     except DirectoryPickerUnavailable as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
     return BrowseDirectoryResponse(path=chosen)
+
+
+@router.get('/storage', response_model=StorageUsageResponse)
+async def storage_usage(request: Request) -> StorageUsageResponse:
+    """Disk usage of the download directory, broken down by top-level folder.
+
+    Scanning a large tree is slow, so it runs in a worker thread and is not
+    part of the SSE snapshot or any polled path -- the UI fetches it on
+    demand.
+    """
+    directory = request.app.state.settings.download_directory
+    usage = await asyncio.to_thread(scan_storage, directory)
+    return StorageUsageResponse(
+        directory=usage.directory,
+        total_bytes=usage.total_bytes,
+        free_bytes=usage.free_bytes,
+        disk_total_bytes=usage.disk_total_bytes,
+        folders=[FolderUsageResponse(name=f.name, bytes=f.bytes, file_count=f.file_count) for f in usage.folders],
+    )
+
+
+# The bundle format version. Bump only on a breaking shape change; import
+# tolerates unknown fields, so additive changes don't need it.
+_EXPORT_VERSION = 1
+
+
+@router.get('/export', response_model=ExportBundle)
+async def export_data(request: Request) -> ExportBundle:
+    """A single JSON backup of settings, saved presets, and playlists (with
+    their items) -- cheap insurance before a phone reset or reinstall."""
+    settings = request.app.state.settings
+    presets = await request.app.state.preset_repository.list()
+    service: CollectionService = request.app.state.collection_service
+    collections = await service.list_collections()
+
+    collection_exports: list[CollectionExport] = []
+    for collection in collections:
+        items = await service.list_items(collection.id)
+        collection_exports.append(CollectionExport(
+            platform=collection.platform.value,
+            name=collection.name,
+            items=[
+                CollectionItemExport(
+                    source_url=item.source_url, content_type=item.content_type,
+                    author_username=item.author_username, profile_username=item.profile_username,
+                    caption=item.caption, thumbnail_url=item.thumbnail_url,
+                    external_id=item.external_id, posted_at=item.posted_at,
+                )
+                for item in items
+            ],
+        ))
+
+    return ExportBundle(
+        pocketdl_export_version=_EXPORT_VERSION,
+        exported_at=datetime.now(timezone.utc),
+        settings=SettingsExport(download_directory=str(settings.download_directory)),
+        presets=[
+            PresetExport(
+                name=preset.name, preset=preset.preset, concurrent_fragments=preset.concurrent_fragments,
+                retries=preset.retries, use_aria2=preset.use_aria2,
+            )
+            for preset in presets
+        ],
+        collections=collection_exports,
+    )
+
+
+@router.post('/import', response_model=ImportResultResponse)
+async def import_data(bundle: ExportBundle, request: Request) -> ImportResultResponse:
+    """Restore a bundle produced by /export. Additive and idempotent: a
+    preset whose name already exists is skipped, a playlist is matched by
+    (platform, name) and its items de-duplicated by content, so re-importing
+    the same file changes nothing. The download directory is applied only if
+    it's valid on this machine (paths differ across devices)."""
+    notes: list[str] = []
+    if bundle.pocketdl_export_version != _EXPORT_VERSION:
+        notes.append(
+            f'Bundle version {bundle.pocketdl_export_version} differs from this build ({_EXPORT_VERSION}); '
+            'imported on a best-effort basis.'
+        )
+
+    preset_repository = request.app.state.preset_repository
+    existing_preset_names = {preset.name for preset in await preset_repository.list()}
+    imported_presets = 0
+    for preset in bundle.presets:
+        if preset.name in existing_preset_names:
+            continue
+        await preset_repository.add(DownloadPreset(
+            id=uuid.uuid4().hex, name=preset.name[:100], preset=preset.preset,
+            concurrent_fragments=preset.concurrent_fragments, retries=preset.retries,
+            use_aria2=preset.use_aria2, created_at=datetime.now(timezone.utc),
+        ))
+        existing_preset_names.add(preset.name)
+        imported_presets += 1
+
+    service: CollectionService = request.app.state.collection_service
+    by_key = {(c.platform.value, c.name): c for c in await service.list_collections()}
+    imported_collections = 0
+    imported_items = 0
+    for collection_export in bundle.collections:
+        key = (collection_export.platform, collection_export.name)
+        target = by_key.get(key)
+        if target is None:
+            target = await service.create_collection(Platform(collection_export.platform), collection_export.name)
+            by_key[key] = target
+            imported_collections += 1
+        previews = [
+            ProfileItemPreview(
+                source_url=item.source_url, content_type=item.content_type,
+                author_username=item.author_username, profile_username=item.profile_username,
+                caption=item.caption, thumbnail_url=item.thumbnail_url,
+                external_id=item.external_id, posted_at=item.posted_at,
+            )
+            for item in collection_export.items
+        ]
+        added, _already = await service.add_items(target.id, previews)
+        imported_items += added
+
+    settings_applied = False
+    if bundle.settings and bundle.settings.download_directory:
+        try:
+            directory = normalize_download_directory(bundle.settings.download_directory)
+        except ValueError:
+            notes.append('The download directory in the bundle is not valid on this machine and was left unchanged.')
+        else:
+            settings = request.app.state.settings
+            settings.download_directory = directory
+            request.app.state.captured_media.download_directory = directory
+            save_download_directory(settings.database_path, directory)
+            settings_applied = True
+
+    return ImportResultResponse(
+        imported_presets=imported_presets,
+        imported_collections=imported_collections,
+        imported_items=imported_items,
+        settings_applied=settings_applied,
+        notes=notes,
+    )
 
 
 @router.get('/system/status', response_model=SystemStatusResponse)

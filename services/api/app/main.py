@@ -21,6 +21,7 @@ from .infrastructure.gallery_dl import GalleryDlService
 from .infrastructure.instaloader_service import InstaloaderService
 from .infrastructure.manifest_fetch import ManifestFetcher
 from .infrastructure.media_probe import MediaProbeService
+from .infrastructure.presets import SqliteDownloadPresetRepository
 from .infrastructure.sqlite import SqliteDownloadRepository
 from .infrastructure.yt_dlp import YtDlpService
 
@@ -37,6 +38,8 @@ async def lifespan(app: FastAPI):
     await capture_repository.initialize()
     collection_repository = SqliteCollectionRepository(settings.database_path)
     await collection_repository.initialize()
+    preset_repository = SqliteDownloadPresetRepository(settings.database_path)
+    await preset_repository.initialize()
     media_probe = MediaProbeService()
     manifest_fetcher = ManifestFetcher()
     capture_service = CaptureService(capture_repository, media_probe, manifest_fetcher)
@@ -66,6 +69,7 @@ async def lifespan(app: FastAPI):
     app.state.capture_service = capture_service
     app.state.captured_media = captured_media
     app.state.collection_repository = collection_repository
+    app.state.preset_repository = preset_repository
     app.state.gallery_dl = gallery_dl
     app.state.instaloader_service = instaloader_service
     app.state.profile_discovery_service = profile_discovery_service

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import type { SettingsResponse } from '../types/api';
 
 interface Props {
@@ -7,12 +7,15 @@ interface Props {
   onReset: () => Promise<SettingsResponse>;
   onOpen: () => Promise<void>;
   onBrowse: () => Promise<string | null>;
+  onExport: () => Promise<void>;
+  onImport: (file: File) => Promise<void>;
   busy: boolean;
 }
 
-export function SettingsPanel({ value, onSave, onReset, onOpen, onBrowse, busy }: Props) {
+export function SettingsPanel({ value, onSave, onReset, onOpen, onBrowse, onExport, onImport, busy }: Props) {
   const [path, setPath] = useState('');
   const [browsing, setBrowsing] = useState(false);
+  const [transferring, setTransferring] = useState(false);
 
   useEffect(() => {
     setPath(value?.download_directory ?? '');
@@ -31,6 +34,28 @@ export function SettingsPanel({ value, onSave, onReset, onOpen, onBrowse, busy }
       if (chosen) setPath(chosen);
     } finally {
       setBrowsing(false);
+    }
+  }
+
+  async function exportBackup() {
+    setTransferring(true);
+    try {
+      await onExport();
+    } finally {
+      setTransferring(false);
+    }
+  }
+
+  async function importBackup(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Reset immediately so re-selecting the same file fires change again.
+    event.target.value = '';
+    if (!file) return;
+    setTransferring(true);
+    try {
+      await onImport(file);
+    } finally {
+      setTransferring(false);
     }
   }
 
@@ -61,6 +86,22 @@ export function SettingsPanel({ value, onSave, onReset, onOpen, onBrowse, busy }
         <button className="secondary" disabled={busy} onClick={() => void onReset()}>Reset default</button>
       </div>
       {value && <div className="settings-default">Default: {value.default_download_directory}</div>}
+
+      <div className="settings-header settings-subsection">
+        <div>
+          <h2>Backup &amp; restore</h2>
+          <p>Export your settings, saved presets, and playlists to a JSON file, or import one. Import is additive — it never overwrites or deletes what you already have.</p>
+        </div>
+      </div>
+      <div className="settings-actions">
+        <button className="secondary" disabled={transferring} onClick={() => void exportBackup()}>
+          {transferring ? 'Working…' : 'Export backup'}
+        </button>
+        <label className="secondary file-button">
+          Import backup…
+          <input type="file" accept="application/json,.json" disabled={transferring} onChange={(event) => void importBackup(event)} />
+        </label>
+      </div>
     </section>
   );
 }
