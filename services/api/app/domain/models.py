@@ -8,6 +8,7 @@ from .errors import DownloadErrorCategory
 class DownloadStatus(StrEnum):
     QUEUED = 'queued'
     RUNNING = 'running'
+    PAUSED = 'paused'
     COMPLETED = 'completed'
     FAILED = 'failed'
     CANCELLED = 'cancelled'

@@ -573,6 +573,12 @@ export default function App() {
           loadingOlder={loadingOlder}
           onLoadOlder={loadOlderDownloads}
           onCancel={async (id) => { await api.cancelDownload(id); await refresh(); }}
+          onPause={async (id) => {
+            try { await api.pauseDownload(id); } catch (error: unknown) { setMessage(error instanceof Error ? error.message : 'Unable to pause download'); } finally { await refresh(); }
+          }}
+          onResume={async (id) => {
+            try { await api.resumeDownload(id); setMessage('Resuming download…'); } catch (error: unknown) { setMessage(error instanceof Error ? error.message : 'Unable to resume download'); } finally { await refresh(); }
+          }}
           onRetry={async (id) => {
             try {
               await api.retryDownload(id);

@@ -1,6 +1,6 @@
 export type DownloadErrorCategory = 'http_401' | 'http_403' | 'http_404' | 'geo_restriction' | 'drm' | 'unsupported_url' | 'format_error' | 'ffmpeg_error' | 'network_error' | 'authentication_required' | 'rate_limited' | 'cancelled' | 'unknown';
 
-export type DownloadStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type DownloadStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 export interface DownloadItem {
   id: string;

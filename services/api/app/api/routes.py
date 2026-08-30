@@ -302,6 +302,25 @@ async def retry_download(job_id: str, request: Request) -> DownloadResponse:
     return to_response(job)
 
 
+@router.post('/downloads/{job_id}/pause', response_model=DownloadResponse)
+async def pause_download(job_id: str, request: Request) -> DownloadResponse:
+    job = await request.app.state.queue.pause(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail='Download not found')
+    return to_response(job)
+
+
+@router.post('/downloads/{job_id}/resume', response_model=DownloadResponse)
+async def resume_download(job_id: str, request: Request) -> DownloadResponse:
+    try:
+        job = await request.app.state.queue.resume(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail='Download not found')
+    return to_response(job)
+
+
 @router.delete('/downloads/{job_id}')
 async def delete_download(job_id: str, request: Request) -> dict[str, bool]:
     job = await request.app.state.repository.get(job_id)

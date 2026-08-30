@@ -10,9 +10,9 @@ from ...domain.models import DownloadEngine, DownloadJob, DownloadSourceType, Do
 from ...domain.ports import CaptureRepository, CollectionRepository, DownloadRepository, Downloader
 
 
-# The terminal states a download can be retried from. A running/queued job
-# is already in flight; a completed one has nothing to redo.
-_RETRYABLE_STATUSES = {DownloadStatus.FAILED, DownloadStatus.CANCELLED}
+# States a download can be re-queued from -- and whose options/context are
+# therefore kept in memory. FAILED/CANCELLED are retried; PAUSED is resumed.
+_RETRYABLE_STATUSES = {DownloadStatus.FAILED, DownloadStatus.CANCELLED, DownloadStatus.PAUSED}
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +54,10 @@ class QueueService:
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.contexts: dict[str, RequestContext] = {}
         self.options: dict[str, JobOptions] = {}
+        # Jobs the user paused mid-run. The downloader can't know a killed
+        # process was a pause vs a failure, so _run consults this to record
+        # PAUSED rather than FAILED once download() returns.
+        self._paused: set[str] = set()
 
     async def _record_progress(self, job: DownloadJob) -> None:
         await self.repository.update(job)
@@ -133,6 +137,11 @@ class QueueService:
                 latest = await self.repository.get(job_id)
                 if latest is None:
                     return
+                # Cancelled or paused while still queued (before a process
+                # existed): honour it instead of starting the download now.
+                if latest.status in {DownloadStatus.CANCELLED, DownloadStatus.PAUSED}:
+                    self._paused.discard(job_id)
+                    return
                 options = self.options[job_id]
                 capture_id = options.capture_id
                 collection_item_id = options.collection_item_id
@@ -152,6 +161,22 @@ class QueueService:
                     media_options=options.media_options,
                     on_progress=self._record_progress,
                 )
+                # A pause terminated the process mid-download; the downloader
+                # will have recorded FAILED. Override to PAUSED (keeping the
+                # partial .part on disk) and skip completion handling.
+                if job_id in self._paused:
+                    self._paused.discard(job_id)
+                    paused = await self.repository.get(job_id)
+                    if paused is not None:
+                        paused.status = DownloadStatus.PAUSED
+                        paused.error = None
+                        paused.error_details = None
+                        paused.error_category = None
+                        paused.finished_at = None
+                        await self.repository.update(paused)
+                        if self._on_change is not None:
+                            self._on_change()
+                    return
                 if capture_id and self.capture_repository:
                     finished = await self.repository.get(job_id)
                     if finished is not None and finished.status is DownloadStatus.COMPLETED:
@@ -173,8 +198,11 @@ class QueueService:
             # missing ffmpeg/yt-dlp binary is the common case) used to leave
             # the job sitting at "running" forever, with the reason visible
             # only in the server log.
+            self._paused.discard(job_id)
             job = await self.repository.get(job_id)
-            if job is not None and job.status not in {DownloadStatus.COMPLETED, DownloadStatus.CANCELLED}:
+            # PAUSED excluded too: a pause that surfaced as a raised error
+            # (killed process) must not be rewritten to FAILED.
+            if job is not None and job.status not in {DownloadStatus.COMPLETED, DownloadStatus.CANCELLED, DownloadStatus.PAUSED}:
                 job.status = DownloadStatus.FAILED
                 job.error = f'{type(exc).__name__}: {exc}'
                 job.error_details = str(exc)
@@ -206,27 +234,27 @@ class QueueService:
             await self.downloader.cancel(job_id)
         return job
 
-    async def retry(self, job_id: str) -> DownloadJob | None:
-        """Re-queue a failed or cancelled job with its original options.
+    async def _requeue(self, job_id: str, allowed: set[DownloadStatus], *, verb: str) -> DownloadJob | None:
+        """Shared re-run path for retry and resume. Re-queues a job with its
+        original options; a standard (yt-dlp) job resumes its partial `.part`
+        (yt-dlp `--continue` is on by default, output template unchanged)
+        rather than starting over -- so retry-after-failure and resume-after-
+        pause both continue where they left off. Captured (ffmpeg) jobs
+        restart, since ffmpeg has no equivalent.
 
-        For a standard (yt-dlp) job this resumes the partial download rather
-        than starting over: yt-dlp's `--continue` is on by default and the
-        output template is unchanged, so it picks up the `.part` file left on
-        disk. Captured (ffmpeg) jobs restart, since ffmpeg has no equivalent.
-
-        Raises ValueError (surfaced as 409) when the job is not in a
-        retryable state, or when its retry state is gone -- options and
-        context live only in memory, so a job cannot be retried after a
-        backend restart; re-adding it is the path then.
+        Raises ValueError (surfaced as 409) when the job isn't in an allowed
+        state, or when its options/context are gone -- they live only in
+        memory, so a backend restart loses them; re-adding is the path then.
         """
         job = await self.repository.get(job_id)
         if job is None:
             return None
-        if job.status not in _RETRYABLE_STATUSES:
-            raise ValueError('Only a failed or cancelled download can be retried.')
+        if job.status not in allowed:
+            raise ValueError(f'This download cannot be {verb}.')
         if job_id not in self.options or job_id not in self.contexts:
-            raise ValueError('This download can no longer be retried; re-add it instead.')
+            raise ValueError(f'This download can no longer be {verb}; re-add it instead.')
 
+        self._paused.discard(job_id)
         job.status = DownloadStatus.QUEUED
         job.error = None
         job.error_details = None
@@ -244,11 +272,36 @@ class QueueService:
             self._on_change()
         return job
 
+    async def retry(self, job_id: str) -> DownloadJob | None:
+        return await self._requeue(job_id, {DownloadStatus.FAILED, DownloadStatus.CANCELLED}, verb='retried')
+
+    async def resume(self, job_id: str) -> DownloadJob | None:
+        return await self._requeue(job_id, {DownloadStatus.PAUSED}, verb='resumed')
+
+    async def pause(self, job_id: str) -> DownloadJob | None:
+        """Pause a queued or running download, keeping its partial file on
+        disk so resume can continue it. Terminates the process (if any) but,
+        unlike cancel, does not mark the job finished."""
+        job = await self.repository.get(job_id)
+        if job is None:
+            return None
+        if job.status in {DownloadStatus.QUEUED, DownloadStatus.RUNNING}:
+            self._paused.add(job_id)
+            job.status = DownloadStatus.PAUSED
+            await self.repository.update(job)
+            # Stop the running process (no-op if still queued). _run sees the
+            # id in self._paused and records PAUSED rather than FAILED.
+            await self.downloader.cancel(job_id)
+            if self._on_change is not None:
+                self._on_change()
+        return job
+
     def forget(self, job_id: str) -> None:
         """Drop retained retry state for a job being deleted, so the option
         and context maps don't hold rows for downloads that no longer exist."""
         self.contexts.pop(job_id, None)
         self.options.pop(job_id, None)
+        self._paused.discard(job_id)
 
     async def shutdown(self) -> None:
         for task in self.tasks.values():

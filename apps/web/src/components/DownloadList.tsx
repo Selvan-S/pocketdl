@@ -31,7 +31,7 @@ function guidanceFor(category: DownloadErrorCategory | null): string | null {
 // request is made; note the snapshot payload itself still carries every job.
 const DOWNLOADS_PAGE_SIZE = 20;
 
-const ACTIVE_STATUSES: DownloadStatus[] = ['queued', 'running'];
+const ACTIVE_STATUSES: DownloadStatus[] = ['queued', 'running', 'paused'];
 
 type DownloadTab = 'active' | 'completed' | 'all';
 
@@ -63,10 +63,12 @@ function formatSpeed(value: number | null): string {
   return value == null ? '—' : `${formatBytes(value)}/s`;
 }
 
-export function DownloadList({ items, onCancel, onRetry, onDelete, onLoadOlder, hasMoreHistory = false, loadingOlder = false }: {
+export function DownloadList({ items, onCancel, onRetry, onPause, onResume, onDelete, onLoadOlder, hasMoreHistory = false, loadingOlder = false }: {
   items: DownloadItem[];
   onCancel: (id: string) => void;
   onRetry: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
   onDelete: (id: string) => void;
   /** Fetch the next page of older finished downloads (history). The live view
    * only holds active + recent jobs; this pulls in the tail on demand. */
@@ -143,9 +145,11 @@ export function DownloadList({ items, onCancel, onRetry, onDelete, onLoadOlder, 
             </details>
           )}
           <div className="actions">
+            {(item.status === 'queued' || item.status === 'running') && <button onClick={() => onPause(item.id)}>Pause</button>}
             {(item.status === 'queued' || item.status === 'running') && <button onClick={() => onCancel(item.id)}>Cancel</button>}
+            {item.status === 'paused' && <button onClick={() => onResume(item.id)}>Resume</button>}
             {(item.status === 'failed' || item.status === 'cancelled') && <button onClick={() => onRetry(item.id)}>Retry</button>}
-            {(item.status === 'failed' || item.status === 'completed' || item.status === 'cancelled') && <button onClick={() => onDelete(item.id)}>Remove</button>}
+            {(item.status === 'failed' || item.status === 'completed' || item.status === 'cancelled' || item.status === 'paused') && <button onClick={() => onDelete(item.id)}>Remove</button>}
           </div>
         </article>
       ))}
