@@ -144,6 +144,10 @@ export interface CaptureDownloadRequest {
   /** Position in the capture's own variant list. Omitted downloads the
    * master, leaving the quality choice to the player's default. */
   variant_index?: number;
+  /** Mux a subtitle track from the HLS master, if it advertises any. */
+  subtitles?: boolean;
+  /** Preferred subtitle language code (e.g. "en"); omitted uses the default track. */
+  subtitle_language?: string;
 }
 
 export type FilenameTemplate = 'title' | 'uploader-title' | 'date-title' | 'title-id';

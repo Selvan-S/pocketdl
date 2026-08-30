@@ -73,6 +73,16 @@ button.secondary { background: transparent; border: 1px solid #2a3652; color: #d
 .wizard-steps { margin: 4px 0; padding-left: 18px; display: grid; gap: 6px; font-size: 12px; color: #c3cde0; }
 .wizard-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .wizard-actions .link-button { margin-right: auto; }
+.tab-bar { display: flex; gap: 6px; margin-bottom: 16px; padding: 5px; background: #0c1322; border: 1px solid #202b44; border-radius: 14px; position: sticky; top: 8px; z-index: 20; }
+.tab-item { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 42px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: #8a99b5; font-weight: 700; font-size: 13px; cursor: pointer; }
+.tab-item:hover { color: #cdd8f2; }
+.tab-item.active { background: #17253a; color: #eaf0ff; }
+.tab-badge { min-width: 18px; height: 18px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: #33507e; color: #eaf0ff; font-size: 10px; font-weight: 800; }
+.tab-item.active .tab-badge { background: #2f6df6; }
+@media (max-width: 520px) {
+  .tab-item { font-size: 12px; padding: 0 6px; }
+  .tab-item .tab-label-long { display: none; }
+}
 .update-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; padding: 10px 14px; border: 1px solid #33507e; border-radius: 12px; background: #17253a; color: #d6e4ff; font-size: 13px; }
 .update-banner-actions { display: flex; align-items: center; gap: 10px; }
 .storage-panel { display: grid; gap: 12px; }

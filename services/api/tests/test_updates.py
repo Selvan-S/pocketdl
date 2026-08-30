@@ -45,3 +45,15 @@ async def test_update_check_endpoint(api_client, monkeypatch) -> None:
     body = response.json()
     assert body['latest'] == '9999.12.31'
     assert body['update_available'] is True
+
+
+def test_zero_padding_is_not_treated_as_an_update(monkeypatch) -> None:
+    # PyPI reports "2026.8.19"; `yt-dlp --version` prints "2026.08.19" for the
+    # same release. Must NOT flag an update.
+    monkeypatch.setattr(updates, '_fetch_latest_yt_dlp', lambda: '2026.8.19')
+    assert check_yt_dlp_update('2026.08.19').update_available is False
+
+
+def test_numeric_component_update_is_detected(monkeypatch) -> None:
+    monkeypatch.setattr(updates, '_fetch_latest_yt_dlp', lambda: '2026.9.1')
+    assert check_yt_dlp_update('2026.08.19').update_available is True

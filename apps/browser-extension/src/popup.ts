@@ -9,6 +9,8 @@ const selectedVariants = new Map<string, number | undefined>();
 // Re-rendering drops the <details> open state with the old DOM, so it has to
 // be tracked here and restored.
 const expandedCaptures = new Set<string>();
+// Per-capture "include subtitles" choice, tracked here for the same reason.
+const subtitleWanted = new Set<string>();
 
 interface CaptureVariant {
   index: number;
@@ -127,7 +129,11 @@ function primaryActionHtml(item: CaptureItem): string {
     const errorLine = download?.status === 'failed' && download.error
       ? `<div class="capture-error">${escapeHtml(download.error)}</div>`
       : '';
+    const subsToggle = item.capture_type === 'hls'
+      ? `<label class="sub-toggle"><input type="checkbox" data-action="subs" data-capture-id="${escapeHtml(item.id)}" ${subtitleWanted.has(item.id) ? 'checked' : ''}> Include subtitles (if any)</label>`
+      : '';
     return `
+      ${subsToggle}
       <button class="download" data-action="download" data-capture-id="${escapeHtml(item.id)}">Download</button>
       ${errorLine}
     `;
@@ -179,7 +185,7 @@ async function downloadCapture(id: string): Promise<void> {
   try {
     await request(`/api/captures/${encodeURIComponent(id)}/download`, {
       method: 'POST',
-      body: JSON.stringify({ variant_index: selectedVariants.get(id) }),
+      body: JSON.stringify({ variant_index: selectedVariants.get(id), subtitles: subtitleWanted.has(id) }),
     });
     if (button) button.textContent = 'Queued';
   } catch (error) {
@@ -311,6 +317,17 @@ document.querySelector<HTMLDivElement>('#captures')?.addEventListener('toggle', 
 
 document.querySelector<HTMLDivElement>('#captures')?.addEventListener('click', (event) => {
   const target = event.target;
+  // The subtitles toggle is a checkbox, not a button. Track it without a
+  // re-render (which would drop the DOM state) -- the choice is kept in
+  // subtitleWanted and restored on the next render.
+  if (target instanceof HTMLInputElement && target.dataset.action === 'subs') {
+    const captureId = target.dataset.captureId;
+    if (captureId) {
+      if (target.checked) subtitleWanted.add(captureId);
+      else subtitleWanted.delete(captureId);
+    }
+    return;
+  }
   if (!(target instanceof HTMLButtonElement)) return;
   const action = target.dataset.action;
   if (action === 'open-folder') {

@@ -12,7 +12,12 @@ from ...domain.captures import (
     make_source_key,
     make_variant_key,
 )
-from ...domain.manifests import is_master_playlist, parse_master_playlist
+from ...domain.manifests import (
+    is_master_playlist,
+    parse_master_playlist,
+    parse_subtitle_renditions,
+    pick_subtitle_rendition,
+)
 from ...domain.models import RequestContext
 from ...domain.ports import CaptureRepository
 from ...infrastructure.manifest_fetch import ManifestFetcher
@@ -163,6 +168,22 @@ class CaptureService:
             variants_status=variants_status,
         )
         return await self.repository.add(capture)
+
+    async def resolve_subtitle_url(self, capture: CapturedSource, language: str | None = None) -> str | None:
+        """The playlist URL of a subtitle track advertised by a captured HLS
+        master, or None (no subtitles, not HLS, or fetch failed). Resolved on
+        demand at download time rather than stored -- subtitles are rare and
+        the master is already fetched cheaply here."""
+        if capture.capture_type is not CaptureType.HLS:
+            return None
+        try:
+            playlist = await self.manifest_fetcher.fetch(capture.media_url, self._request_context(capture))
+        except Exception:
+            return None
+        if not is_master_playlist(playlist):
+            return None
+        rendition = pick_subtitle_rendition(parse_subtitle_renditions(playlist, capture.media_url), language)
+        return rendition.url if rendition else None
 
     async def resolve_variants(self, capture_id: str) -> None:
         """Read a captured HLS playlist and record the qualities it offers.

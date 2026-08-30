@@ -811,6 +811,17 @@ class InstaloaderService:
             job.status = DownloadStatus.COMPLETED
             job.progress = 100.0
             job.output_path = output_path
+            # instaloader gives no progress bytes, so the UI showed "0 B" on a
+            # finished download. Report the written file's size (both counters,
+            # since it's complete) so it reads "5.2 MB / 5.2 MB". A carousel's
+            # extra images aren't summed -- this is the primary file -- but any
+            # real size beats a misleading zero.
+            try:
+                size = Path(output_path).stat().st_size
+                job.downloaded_bytes = size
+                job.total_bytes = size
+            except OSError:
+                pass
             job.error = None
             job.error_details = None
             job.error_category = None

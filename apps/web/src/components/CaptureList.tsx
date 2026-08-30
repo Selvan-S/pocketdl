@@ -67,6 +67,7 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
   // undefined means "let the site decide" -- ffmpeg reads the master and picks
   // its default rather than us forcing a quality the user did not choose.
   const [variantIndex, setVariantIndex] = useState<number | undefined>(undefined);
+  const [subtitles, setSubtitles] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const hasVariants = item.variants.length > 0;
@@ -75,7 +76,11 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
   const download = async () => {
     setBusy(true);
     try {
-      await onDownload(item.id, { filename: filename.trim() || undefined, variant_index: variantIndex });
+      await onDownload(item.id, {
+        filename: filename.trim() || undefined,
+        variant_index: variantIndex,
+        subtitles: subtitles || undefined,
+      });
     } finally {
       setBusy(false);
     }
@@ -159,6 +164,13 @@ function CaptureCard({ item, onDownload, onDelete }: CaptureActions & { item: Ca
 
         {item.metadata_status === 'failed' && item.metadata_error && (
           <div className="capture-metadata-warning">Metadata unavailable: {item.metadata_error}</div>
+        )}
+
+        {item.capture_type === 'hls' && (
+          <label className="checkbox-chip capture-subtitle-toggle">
+            <input type="checkbox" checked={subtitles} onChange={(event) => setSubtitles(event.target.checked)} />
+            Include subtitles (if the stream has any)
+          </label>
         )}
 
         <div className="capture-actions">

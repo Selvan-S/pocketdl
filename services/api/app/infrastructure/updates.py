@@ -25,6 +25,21 @@ def _normalize(version: str | None) -> str | None:
     return token[0] if token else None
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Numeric components of a version for comparison. yt-dlp's date-based
+    versions are inconsistently zero-padded across sources -- PyPI reports
+    "2026.8.19" while `yt-dlp --version` prints "2026.08.19" for the *same*
+    release -- so a plain string compare falsely flags an update. Comparing
+    ints per component fixes that; a non-numeric part degrades to 0."""
+    parts: list[int] = []
+    for part in version.split('.'):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
 def _fetch_latest_yt_dlp() -> str:
     request = urllib.request.Request(_PYPI_URL, headers={'Accept': 'application/json'})
     with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310 (fixed trusted URL)
@@ -42,5 +57,8 @@ def check_yt_dlp_update(current: str | None) -> UpdateStatus:
         latest = _normalize(_fetch_latest_yt_dlp())
     except Exception as exc:  # noqa: BLE001 (best-effort: report, don't raise)
         return UpdateStatus(current=normalized_current, latest=None, update_available=False, error=str(exc))
-    available = bool(latest and normalized_current and latest > normalized_current)
+    available = bool(
+        latest and normalized_current
+        and _version_tuple(latest) > _version_tuple(normalized_current)
+    )
     return UpdateStatus(current=normalized_current, latest=latest, update_available=available)

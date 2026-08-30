@@ -437,6 +437,13 @@ async def download_capture(capture_id: str, request: Request, payload: CaptureDo
         media_url = selected.url
         audio_url = selected.audio_url
 
+    # Subtitles (opt-in) come from a separate #EXT-X-MEDIA:TYPE=SUBTITLES
+    # rendition on the HLS master; resolved on demand. A miss (no subtitles,
+    # not HLS) simply leaves the download without them.
+    subtitle_url: str | None = None
+    if options.subtitles:
+        subtitle_url = await request.app.state.capture_service.resolve_subtitle_url(capture, options.subtitle_language)
+
     context = RequestContext(
         page_url=capture.page_url,
         referer=capture.referer,
@@ -457,6 +464,7 @@ async def download_capture(capture_id: str, request: Request, payload: CaptureDo
         capture_id=capture.id,
         title=capture.page_title,
         audio_url=audio_url,
+        subtitle_url=subtitle_url,
     )
     return to_response(job)
 

@@ -219,6 +219,10 @@ class CaptureDownloadRequest(BaseModel):
     variant_index: int | None = Field(default=None, ge=0)
     """Position of a quality from the capture's own variant list. Omitted
     downloads the master, letting the player's default quality apply."""
+    subtitles: bool = False
+    """Mux a subtitle track from the HLS master (if it advertises any) into
+    the output. No-op for non-HLS captures or masters without subtitles."""
+    subtitle_language: str | None = Field(default=None, max_length=20)
 
 
 class CaptureVariantResponse(BaseModel):
