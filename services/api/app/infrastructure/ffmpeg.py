@@ -19,17 +19,28 @@ class CapturedMediaService:
         self.download_directory = download_directory
         self._processes: dict[str, asyncio.subprocess.Process] = {}
 
+    # Headers we never forward to ffmpeg. Credentials are dropped for the
+    # usual reasons; accept-encoding is dropped because the captured value is
+    # the *browser's* (e.g. "gzip, deflate, br, zstd") and ffmpeg's HTTP
+    # client cannot decode brotli/zstd -- it then receives a compressed body,
+    # fails to recognise the playlist, and dies with "Unknown content coding:
+    # br" / "Invalid data found". We force identity below instead.
+    _SKIP_HEADERS = {'cookie', 'authorization', 'proxy-authorization', 'set-cookie', 'host', 'accept-encoding'}
+
     @staticmethod
     def _headers_block(context: RequestContext) -> str:
         headers: dict[str, str] = {}
         for name, value in context.headers.items():
-            if name.lower() in {'cookie', 'authorization', 'proxy-authorization', 'set-cookie', 'host'}:
+            if name.lower() in CapturedMediaService._SKIP_HEADERS:
                 continue
             headers[name] = value
         if context.referer:
             headers['Referer'] = context.referer
         if context.origin:
             headers['Origin'] = context.origin
+        # Ask for an uncompressed response: the one encoding ffmpeg reliably
+        # handles here is identity. Set last so it wins over anything above.
+        headers['Accept-Encoding'] = 'identity'
         return ''.join(f'{name}: {value}\r\n' for name, value in headers.items())
 
     @staticmethod
