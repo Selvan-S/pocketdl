@@ -1308,6 +1308,23 @@ reading only (no browser automation here).
   additive and idempotent, and applies the download directory only if valid
   on the importing machine.
 
+## Product-polish Round 3 — done (branch feature/product-polish-round3)
+Four items, backend test-covered; all UI verified by build + typecheck +
+reading only (no browser automation here).
+- **Subtitles & preferred audio language — done.** A `MediaOptions` value
+  (subtitles, subtitle_langs, embed_subtitles, audio_language) threaded
+  create → queue → yt-dlp; maps to --write-subs/--sub-langs (+ --embed-subs)
+  and -S lang: sorting. Standard downloads only.
+- **File conflict handling — done.** `conflict_strategy` skip (default) /
+  overwrite / rename for standard downloads; rename uses `unique_stem` for an
+  explicit filename, falls back to --no-overwrites for a title-based one.
+  Captured downloads already rename on conflict.
+- **First-run setup wizard — done.** One-time localStorage-tracked modal:
+  download dir → extension install walkthrough → done. Frontend-only.
+- **Update-available banner — done.** `GET /api/system/update-check` compares
+  installed yt-dlp against PyPI (fetched once on load, never polled); a
+  dismissible banner offers "Update now". gallery-dl not covered (not live).
+
 ## Medium-term (remaining)
 - Wi-Fi-only download gating. Not previously listed — guards mobile data
   usage; checkable client-side via the Network Information API before a
@@ -1322,14 +1339,10 @@ reading only (no browser automation here).
 - Watch-folder automation, download scheduling, bandwidth limits (backlog).
 
 ## New, not previously listed
-- First-run setup wizard: pick the download directory, confirm storage
-  permission, walk through installing the capture extension. Reduces the
-  "why isn't this working" support burden for a self-hosted tool where
-  there's no one else to ask.
-- Update-available banner extending the existing yt-dlp version-check
-  mechanism (`YtDlpService.versions` / `update_yt_dlp`) to gallery-dl once
-  it ships, so both engines share one update path instead of yt-dlp being
-  the only one that's easy to keep current.
+- ~~First-run setup wizard~~ — **done** in product-polish Round 3.
+- ~~Update-available banner~~ — **done** in product-polish Round 3 for
+  yt-dlp; extend to gallery-dl if/when it becomes a live engine (it isn't
+  today — it's reserved for the next non-Instagram platform).
 
 ---
 

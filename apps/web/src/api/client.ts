@@ -20,6 +20,7 @@ import type {
   SettingsResponse,
   StorageUsage,
   SystemStatus,
+  UpdateCheck,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -77,6 +78,7 @@ export const api = {
   listPresets: () => request<DownloadPreset[]>('/presets'),
   createPreset: (payload: DownloadPresetCreateRequest) => request<DownloadPreset>('/presets', { method: 'POST', body: JSON.stringify(payload) }),
   deletePreset: (id: string) => request<{ ok: true }>(`/presets/${id}`, { method: 'DELETE' }),
+  checkUpdate: () => request<UpdateCheck>('/system/update-check'),
   updateYtDlp: () => request<{ ok: true; version: string | null }>('/system/update/yt-dlp', { method: 'POST' }),
   listCaptures: () => request<CaptureItem[]>('/captures'),
   downloadCapture: (id: string, payload: CaptureDownloadRequest) => request<DownloadItem>(`/captures/${id}/download`, { method: 'POST', body: JSON.stringify(payload) }),

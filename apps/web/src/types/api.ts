@@ -39,6 +39,16 @@ export interface DownloadCreateRequest {
   concurrent_fragments?: number;
   retries?: number;
   use_aria2?: boolean;
+  /** Download subtitles/captions (standard yt-dlp downloads only). */
+  subtitles?: boolean;
+  /** Comma-separated language codes or "all"; only used when subtitles is true. */
+  subtitle_langs?: string;
+  /** Embed subtitles into the container instead of a sidecar file. */
+  embed_subtitles?: boolean;
+  /** Preferred audio-track language code (e.g. "en", "pt-BR") when a source has several. */
+  audio_language?: string;
+  /** What to do if the output file already exists (standard downloads). */
+  conflict_strategy?: 'skip' | 'overwrite' | 'rename';
   request_context?: {
     page_url?: string;
     referer?: string;
@@ -247,6 +257,13 @@ export interface CollectionDownloadRequest {
   preset?: 'best' | '1080p' | '720p' | 'audio';
   concurrent_fragments?: number;
   retries?: number;
+}
+
+export interface UpdateCheck {
+  current: string | null;
+  latest: string | null;
+  update_available: boolean;
+  error: string | null;
 }
 
 export interface ImportResult {

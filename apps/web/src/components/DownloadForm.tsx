@@ -27,6 +27,11 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
   const [concurrentFragments, setConcurrentFragments] = useState(8);
   const [retries, setRetries] = useState(10);
   const [useAria2, setUseAria2] = useState(false);
+  const [subtitles, setSubtitles] = useState(false);
+  const [subtitleLangs, setSubtitleLangs] = useState('en');
+  const [embedSubtitles, setEmbedSubtitles] = useState(false);
+  const [audioLanguage, setAudioLanguage] = useState('');
+  const [conflictStrategy, setConflictStrategy] = useState<NonNullable<DownloadCreateRequest['conflict_strategy']>>('skip');
   const [presetName, setPresetName] = useState('');
   const [savingPreset, setSavingPreset] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -39,6 +44,19 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
   const [impersonation, setImpersonation] = useState<NonNullable<DownloadCreateRequest['request_context']>['impersonation']>('auto');
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
   const [formatId, setFormatId] = useState<string | null>(null);
+
+  /** Subtitle/audio options common to single and batch submissions. */
+  function mediaOptions(): Partial<DownloadCreateRequest> {
+    const options: Partial<DownloadCreateRequest> = {};
+    if (subtitles) {
+      options.subtitles = true;
+      options.subtitle_langs = subtitleLangs.trim() || 'en';
+      options.embed_subtitles = embedSubtitles;
+    }
+    if (audioLanguage.trim()) options.audio_language = audioLanguage.trim();
+    if (conflictStrategy !== 'skip') options.conflict_strategy = conflictStrategy;
+    return options;
+  }
 
   function requestContext() {
     const context: DownloadCreateRequest['request_context'] = { impersonation };
@@ -109,6 +127,7 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
             concurrent_fragments: concurrentFragments,
             retries,
             use_aria2: useAria2,
+            ...mediaOptions(),
             request_context: requestContext(),
           })),
         );
@@ -119,6 +138,7 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
           concurrent_fragments: concurrentFragments,
           retries,
           use_aria2: useAria2,
+          ...mediaOptions(),
           request_context: requestContext(),
         };
         if (filename.trim()) payload.filename = filename.trim();
@@ -211,6 +231,34 @@ export function DownloadForm({ onSubmit, onSubmitBatch, onAnalyze, presets, onSa
           <label className="checkbox-chip">
             <input type="checkbox" checked={useAria2} onChange={(event) => setUseAria2(event.target.checked)} />
             Use aria2 for direct downloads (when available)
+          </label>
+
+          <div className="field-help">Subtitles &amp; audio</div>
+          <label className="checkbox-chip">
+            <input type="checkbox" checked={subtitles} onChange={(event) => setSubtitles(event.target.checked)} />
+            Download subtitles/captions
+          </label>
+          {subtitles && (
+            <div className="row">
+              <label htmlFor="sub-langs">Languages
+                <input id="sub-langs" value={subtitleLangs} onChange={(event) => setSubtitleLangs(event.target.value)} placeholder="en,es or all" maxLength={100} />
+              </label>
+              <label className="checkbox-chip">
+                <input type="checkbox" checked={embedSubtitles} onChange={(event) => setEmbedSubtitles(event.target.checked)} />
+                Embed into video
+              </label>
+            </div>
+          )}
+          <label htmlFor="audio-language">Preferred audio language <span className="hint">(optional)</span>
+            <input id="audio-language" value={audioLanguage} onChange={(event) => setAudioLanguage(event.target.value)} placeholder="e.g. en, pt-BR" maxLength={20} />
+          </label>
+
+          <label htmlFor="conflict-strategy">If the file already exists
+            <select id="conflict-strategy" value={conflictStrategy} onChange={(event) => setConflictStrategy(event.target.value as typeof conflictStrategy)}>
+              <option value="skip">Skip (keep existing)</option>
+              <option value="rename">Rename (keep both)</option>
+              <option value="overwrite">Overwrite</option>
+            </select>
           </label>
 
           <div className="field-help">Save the current quality + performance settings as a reusable preset.</div>

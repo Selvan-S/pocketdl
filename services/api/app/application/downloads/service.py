@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from ...core.filenames import sanitize_filename
 from ...domain.errors import DownloadErrorCategory
-from ...domain.models import DownloadEngine, DownloadJob, DownloadSourceType, DownloadStatus, RequestContext
+from ...domain.models import DownloadEngine, DownloadJob, DownloadSourceType, DownloadStatus, MediaOptions, RequestContext
 from ...domain.ports import CaptureRepository, CollectionRepository, DownloadRepository, Downloader
 
 
@@ -28,6 +28,7 @@ class JobOptions:
     capture_id: str | None
     audio_url: str | None
     collection_item_id: str | None
+    media_options: MediaOptions = MediaOptions()
 
 
 class QueueService:
@@ -75,6 +76,7 @@ class QueueService:
         audio_url: str | None = None,
         engine: DownloadEngine = DownloadEngine.YT_DLP,
         collection_item_id: str | None = None,
+        media_options: MediaOptions = MediaOptions(),
     ) -> DownloadJob:
         normalized_filename = sanitize_filename(filename) if filename else None
         if not normalized_filename and title:
@@ -120,6 +122,7 @@ class QueueService:
             capture_id=capture_id,
             audio_url=audio_url,
             collection_item_id=collection_item_id,
+            media_options=media_options,
         )
         self.tasks[job.id] = asyncio.create_task(self._run(job.id))
         return job
@@ -146,6 +149,7 @@ class QueueService:
                     capture_id=capture_id,
                     audio_url=options.audio_url,
                     collection_item_id=collection_item_id,
+                    media_options=options.media_options,
                     on_progress=self._record_progress,
                 )
                 if capture_id and self.capture_repository:

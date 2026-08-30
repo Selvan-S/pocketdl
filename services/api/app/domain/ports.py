@@ -5,7 +5,7 @@ from typing import Protocol
 from .analyzer import MediaAnalysis
 from .captures import CaptureVariant, CapturedSource
 from .collections import Collection, CollectionItem
-from .models import DownloadJob, DownloadSourceType, RequestContext
+from .models import DownloadJob, DownloadSourceType, MediaOptions, RequestContext
 from .presets import DownloadPreset
 
 ProgressCallback = Callable[[DownloadJob], Awaitable[None]]
@@ -34,6 +34,7 @@ class Downloader(Protocol):
         capture_id: str | None,
         audio_url: str | None,
         collection_item_id: str | None,
+        media_options: MediaOptions,
         on_progress: ProgressCallback,
     ) -> DownloadJob: ...
 

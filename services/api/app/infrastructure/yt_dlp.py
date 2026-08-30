@@ -19,9 +19,9 @@ from ..application.downloads.strategy import (
     without_cert_verification,
 )
 from ..core.config import Settings
-from ..core.filenames import sanitize_filename
+from ..core.filenames import sanitize_filename, unique_stem
 from ..domain.analyzer import MediaAnalysis, parse_media_analysis
-from ..domain.models import DownloadEngine, DownloadJob, DownloadStatus, DownloadSourceType, RequestContext
+from ..domain.models import ConflictStrategy, DownloadEngine, DownloadJob, DownloadStatus, DownloadSourceType, MediaOptions, RequestContext
 from .ffmpeg import CapturedMediaService
 from .gallery_dl import GalleryDlService
 from .instaloader_service import InstaloaderService
@@ -154,12 +154,29 @@ class YtDlpService:
 
         raise RuntimeError(last_output or 'yt-dlp analysis failed.')
 
-    def _output_template(self, job: DownloadJob) -> str:
+    def _output_template(self, job: DownloadJob, conflict_strategy: ConflictStrategy = ConflictStrategy.SKIP) -> str:
         directory = self.settings.download_directory
         if job.filename:
             stem = sanitize_filename(job.filename)
+            # RENAME needs the collision resolved up front, since we know the
+            # stem here. A title-based download (no explicit filename) can't
+            # be resolved in advance -- its final name isn't known until
+            # yt-dlp extracts it -- so it relies on the --no-overwrites flag
+            # from _conflict_args instead.
+            if conflict_strategy is ConflictStrategy.RENAME:
+                stem = unique_stem(directory, stem)
             return str(directory / f'{stem}.%(ext)s')
         return str(directory / '%(title)s.%(ext)s')
+
+    @staticmethod
+    def _conflict_args(conflict_strategy: ConflictStrategy) -> list[str]:
+        if conflict_strategy is ConflictStrategy.OVERWRITE:
+            return ['--force-overwrites']
+        # SKIP and RENAME both must never clobber an existing file. RENAME has
+        # already picked a free name for an explicit filename; --no-overwrites
+        # is the backstop (and, for a title-based download, the whole
+        # behaviour: yt-dlp skips a file it has already downloaded).
+        return ['--no-overwrites']
 
     @staticmethod
     def _error_summary(lines: list[str], return_code: int) -> str:
@@ -167,6 +184,19 @@ class YtDlpService:
         if errors:
             return '\n'.join(dict.fromkeys(errors))
         return f'yt-dlp exited with code {return_code}.'
+
+    @staticmethod
+    def _subtitle_args(preset: str, media_options: MediaOptions) -> list[str]:
+        # Subtitles are meaningless for an audio-only extraction, and can't be
+        # embedded into an mp3 -- so skip them there entirely.
+        if not media_options.subtitles or preset == 'audio':
+            return []
+        args = ['--write-subs', '--write-auto-subs', '--sub-langs', media_options.subtitle_langs]
+        if media_options.embed_subtitles:
+            # Embed into the container; still keep the sidecar so nothing is
+            # lost if the muxer can't carry a given subtitle codec.
+            args.append('--embed-subs')
+        return args
 
     def _build_args(
         self,
@@ -179,6 +209,7 @@ class YtDlpService:
         use_aria2: bool,
         request_context: RequestContext,
         attempt: DownloadAttempt,
+        media_options: MediaOptions = MediaOptions(),
     ) -> list[str]:
         args = [
             sys.executable,
@@ -192,9 +223,15 @@ class YtDlpService:
             '--concurrent-fragments',
             str(max(1, min(concurrent_fragments, 32))),
             '--output',
-            self._output_template(job),
+            self._output_template(job, media_options.conflict_strategy),
             *format_args(preset, format_id),
         ]
+        args += self._conflict_args(media_options.conflict_strategy)
+        args += self._subtitle_args(preset, media_options)
+        # Prefer a particular audio-track language when the source has several.
+        # -S sorting, not a filter: a single-track source is unaffected.
+        if media_options.audio_language:
+            args += ['-S', f'lang:{media_options.audio_language}']
         args += self._context_args(request_context, impersonate=attempt.impersonate)
         if attempt.use_ffmpeg_hls:
             args += ['--downloader', 'ffmpeg', '--hls-use-mpegts']
@@ -239,6 +276,7 @@ class YtDlpService:
         on_progress: ProgressCallback,
         audio_url: str | None = None,
         collection_item_id: str | None = None,
+        media_options: MediaOptions = MediaOptions(),
     ) -> DownloadJob:
         if job.engine is DownloadEngine.GALLERY_DL:
             return await self.gallery_dl.download(
@@ -290,6 +328,7 @@ class YtDlpService:
                 use_aria2=use_aria2,
                 request_context=request_context,
                 attempt=attempt,
+                media_options=media_options,
             )
             return_code, lines = await self._run_process(job, args, on_progress)
             output = '\n'.join(lines)
