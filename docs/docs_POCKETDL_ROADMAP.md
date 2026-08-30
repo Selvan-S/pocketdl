@@ -1259,18 +1259,33 @@ productization) and the future idea backlog above. This section prioritizes
 those into tiers and adds a few items not previously listed, so the backlog
 isn't just an unordered wishlist.
 
-## Near-term (right after the Phase 5 pilot platform lands)
-- Android share target + browser extension "Send to PocketDL" context menu
-  (Phase 7 backlog) — the single biggest mobile usability win, and it's a
-  PWA manifest feature (`share_target`), not a native app.
-- Notification on download/collection completion (Phase 7 backlog).
-- Batch URL input — paste N URLs, one per line, queue all at once. Not
-  previously listed; pairs naturally with the Phase 5 collection/playlist
-  work (add several profile items, or several plain URLs, in one action).
-- Failed-download retry + partial-file resume (Phase 6) — yt-dlp already
-  supports `--continue`; today a failed job means a full re-download.
-- WebSocket/SSE progress instead of polling (Phase 6) — lower battery/CPU
-  cost on Termux matters more than on desktop.
+## Product-polish Round 1 — done (branch feature/product-polish-enhancements)
+Four near-term items, backend test-covered where applicable; all UI verified
+by build + typecheck + reading only (no browser automation here).
+- **Failed-download retry + resume — done.** `POST /api/downloads/{id}/retry`
+  re-queues a failed/cancelled job with its original options/context; for a
+  standard yt-dlp job it resumes the `.part` file (yt-dlp `--continue` is on
+  by default, output template unchanged) rather than restarting. Retry state
+  is retained in memory only for retryable (failed/cancelled) jobs, so it's
+  bounded; a 409 tells the user to re-add when the state is gone (e.g. after
+  a restart). Tests: `tests/test_queue_retry.py`.
+- **Batch URL input — done.** The URL box (already a textarea) switches to
+  batch mode on more than one non-empty line; `parseUrls` trims/dedupes and
+  each line is queued at the chosen preset. Test: `DownloadForm.test.ts`.
+- **"Send to PocketDL" context menu — done (extension).** Right-click a
+  link/video/audio/image/page to queue its URL as a standard download via
+  `/api/downloads`; badge flash + a popup banner report success/failure. The
+  *Android share target* half of this item is still open.
+- **Notification on download/collection completion — done.** Opt-in toggle;
+  App diffs each SSE snapshot and notifies on a job finishing or a playlist
+  reaching full downloaded_count. Pure detection in `lib/notifications` with
+  unit tests.
+
+## Near-term (remaining)
+- Android share target (`share_target` PWA manifest feature) — the mobile
+  half of the "Send to PocketDL" item above.
+- WebSocket/SSE progress instead of polling (Phase 6) — **done** in Round 8
+  of the Phase 5 pilot (the SSE stream replaced the 2s poll).
 
 ## Medium-term
 - Storage/disk-usage dashboard with a per-platform breakdown and cleanup
