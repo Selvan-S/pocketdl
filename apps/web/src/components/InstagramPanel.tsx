@@ -38,6 +38,13 @@ interface Props {
 // see _MAX_PAGE_SIZE in instaloader_service.py.
 const BULK_ADD_LIMIT = 200;
 
+// Initial preview page size, kept small on purpose. Each selected content
+// type is fetched separately, and Instagram rate-limits automated access
+// hard, so a full-profile preview at the old default (50 per type) could be
+// a dozen+ requests and risk a temporary account restriction. "Load older
+// items" pages more only when the user asks.
+const PREVIEW_PAGE_SIZE = 12;
+
 const CONTENT_TYPES: Array<{ value: InstagramContentType; label: string }> = [
   { value: 'post', label: 'Posts' },
   { value: 'reel', label: 'Reels' },
@@ -73,6 +80,11 @@ export function InstagramPanel({ collections, onCollectionsChanged, onMessage, o
 
   return (
     <div className="instagram-panel">
+      <div className="instagram-warning" role="note">
+        <strong>Instagram rate-limits automated access.</strong> To avoid a temporary account restriction:
+        prefer a secondary account, preview a small batch (this loads {PREVIEW_PAGE_SIZE} per type and pages more only when you ask),
+        add a date range for large profiles, and don’t browse or download a lot in quick succession.
+      </div>
       <SessionControl session={session} onChange={setSession} onMessage={onMessage} />
       <ProfileBrowser collections={collections} onCollectionsChanged={onCollectionsChanged} onMessage={onMessage} />
       <PlaylistsView
@@ -280,6 +292,7 @@ function ProfileBrowser({
       content_types: selectedTypes,
       posted_after: dateInputToRangeStart(postedAfter),
       posted_before: dateInputToRangeEnd(postedBefore),
+      limit: PREVIEW_PAGE_SIZE,
     };
   }
 
