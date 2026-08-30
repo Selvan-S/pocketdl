@@ -220,9 +220,12 @@ class CaptureDownloadRequest(BaseModel):
     """Position of a quality from the capture's own variant list. Omitted
     downloads the master, letting the player's default quality apply."""
     subtitles: bool = False
-    """Mux a subtitle track from the HLS master (if it advertises any) into
-    the output. No-op for non-HLS captures or masters without subtitles."""
+    """Include a subtitle track from the HLS master (if it advertises any).
+    No-op for non-HLS captures or masters without subtitles."""
     subtitle_language: str | None = Field(default=None, max_length=20)
+    embed_subtitles: bool = True
+    """True embeds the subtitle into the mp4; False writes a sidecar .srt
+    next to the video. Only meaningful when subtitles is true."""
 
 
 class CaptureVariantResponse(BaseModel):

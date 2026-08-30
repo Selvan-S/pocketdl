@@ -81,6 +81,7 @@ class CapturedMediaService:
         user_agent: str | None,
         audio_url: str | None = None,
         subtitle_url: str | None = None,
+        embed_subtitles: bool = True,
     ) -> list[str]:
         args = ['ffmpeg', '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning']
         args += CapturedMediaService._input_args(url, headers, user_agent)
@@ -100,17 +101,25 @@ class CapturedMediaService:
         else:
             maps += ['-map', '0:a:0?']
         codec_args = ['-c', 'copy', '-movflags', '+faststart']
+        subtitle_input: int | None = None
         if subtitle_url:
             # HLS subtitles are a separate #EXT-X-MEDIA:TYPE=SUBTITLES playlist
-            # (usually WebVTT). Add it as its own input and convert to mov_text
-            # so it embeds in the mp4 container.
+            # (usually WebVTT). Add it as its own input; embed it into the mp4
+            # (mov_text) or, if not embedding, write it as a sidecar below.
             args += CapturedMediaService._input_args(subtitle_url, headers, user_agent)
-            maps += ['-map', f'{next_input}:s:0?']
-            codec_args += ['-c:s', 'mov_text']
+            subtitle_input = next_input
             next_input += 1
+            if embed_subtitles:
+                maps += ['-map', f'{subtitle_input}:s:0?']
+                codec_args += ['-c:s', 'mov_text']
         args += maps
         args += codec_args
         args += ['-progress', 'pipe:1', str(output_path)]
+        # Sidecar mode: a second output next to the video, converted to SRT
+        # (a widely-compatible sidecar players auto-load by matching basename).
+        if subtitle_url and not embed_subtitles and subtitle_input is not None:
+            sidecar = output_path.with_suffix('.srt')
+            args += ['-map', f'{subtitle_input}:s:0?', '-c:s', 'srt', str(sidecar)]
         return args
 
     async def _probe_duration(self, url: str, context: RequestContext) -> int | None:
@@ -147,6 +156,7 @@ class CapturedMediaService:
         on_progress: ProgressCallback,
         audio_url: str | None = None,
         subtitle_url: str | None = None,
+        embed_subtitles: bool = True,
     ) -> DownloadJob:
         job.status = DownloadStatus.RUNNING
         job.started_at = datetime.now(timezone.utc)
@@ -168,7 +178,7 @@ class CapturedMediaService:
         return_code = 1
 
         for attempt_number in range(1, max_attempts + 1):
-            args = self._build_ffmpeg_args(job.url, output_path, headers, context.user_agent, audio_url, subtitle_url)
+            args = self._build_ffmpeg_args(job.url, output_path, headers, context.user_agent, audio_url, subtitle_url, embed_subtitles)
 
             process = await asyncio.create_subprocess_exec(
                 *args,

@@ -347,6 +347,19 @@ export default function App() {
     setShowWizard(false);
   }
 
+  async function clearCompleted() {
+    try {
+      const { removed } = await api.clearCompletedDownloads();
+      // Drop the removed completed jobs from any loaded history too.
+      setOlderHistory((current) => current.filter((item) => item.status !== 'completed'));
+      setMessage(removed > 0 ? `Cleared ${removed} completed download(s).` : 'No completed downloads to clear.');
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : 'Unable to clear completed downloads');
+    } finally {
+      await refresh();
+    }
+  }
+
   async function addDownload(payload: DownloadCreateRequest) {
     await api.createDownload(payload);
     setMessage('Added to queue.');
@@ -617,6 +630,9 @@ export default function App() {
           </button>
           <button className="secondary compact" disabled={updating} onClick={updateYtDlp}>
             {updating ? 'Updating…' : 'Update yt-dlp'}
+          </button>
+          <button className="secondary compact" onClick={() => void clearCompleted()}>
+            Clear completed
           </button>
         </div>
         <DownloadList
