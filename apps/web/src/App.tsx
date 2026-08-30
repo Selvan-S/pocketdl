@@ -6,6 +6,7 @@ import { CaptureList } from './components/CaptureList';
 import { InstagramPanel } from './components/InstagramPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { StoragePanel } from './components/StoragePanel';
+import { SetupWizard } from './components/SetupWizard';
 import type { AnalyzeResponse, CaptureDownloadRequest, CaptureItem, Collection, DownloadCreateRequest, DownloadItem, DownloadPreset, DownloadPresetCreateRequest, ServerStateEvent, SettingsResponse, SystemStatus, UpdateCheck } from './types/api';
 import {
   collectionsThatCompleted,
@@ -17,6 +18,7 @@ import {
 import './styles.css';
 
 const NOTIFICATIONS_STORAGE_KEY = 'pocketdl.notifications';
+const SETUP_STORAGE_KEY = 'pocketdl.setupComplete';
 
 /** Structural equality by serialisation. The payloads here are small,
  * JSON-derived, and compared once per pushed frame, so this is cheaper than
@@ -51,6 +53,13 @@ export default function App() {
   const [presets, setPresets] = useState<DownloadPreset[]>([]);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [showWizard, setShowWizard] = useState(() => {
+    try {
+      return localStorage.getItem(SETUP_STORAGE_KEY) !== '1';
+    } catch {
+      return false;
+    }
+  });
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === 'on';
@@ -273,6 +282,11 @@ export default function App() {
     }
   }
 
+  function finishWizard() {
+    try { localStorage.setItem(SETUP_STORAGE_KEY, '1'); } catch { /* ignore */ }
+    setShowWizard(false);
+  }
+
   async function addDownload(payload: DownloadCreateRequest) {
     await api.createDownload(payload);
     setMessage('Added to queue.');
@@ -399,6 +413,9 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      {showWizard && (
+        <SetupWizard settings={settings} onSaveLocation={saveSettings} onFinish={finishWizard} />
+      )}
       <header className="topbar">
         <div className="brand-block">
           <div className="eyebrow">LOCAL MEDIA DOWNLOADER</div>
