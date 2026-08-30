@@ -63,11 +63,16 @@ function formatSpeed(value: number | null): string {
   return value == null ? '—' : `${formatBytes(value)}/s`;
 }
 
-export function DownloadList({ items, onCancel, onRetry, onDelete }: {
+export function DownloadList({ items, onCancel, onRetry, onDelete, onLoadOlder, hasMoreHistory = false, loadingOlder = false }: {
   items: DownloadItem[];
   onCancel: (id: string) => void;
   onRetry: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Fetch the next page of older finished downloads (history). The live view
+   * only holds active + recent jobs; this pulls in the tail on demand. */
+  onLoadOlder?: () => void;
+  hasMoreHistory?: boolean;
+  loadingOlder?: boolean;
 }) {
   const [tab, setTab] = useState<DownloadTab>('all');
   const [page, setPage] = useState(0);
@@ -144,9 +149,10 @@ export function DownloadList({ items, onCancel, onRetry, onDelete }: {
           </div>
         </article>
       ))}
-      {filtered.length === 0 ? (
+      {filtered.length === 0 && !(tab !== 'active' && hasMoreHistory) && (
         <div className="empty">No {tab === 'all' ? '' : `${tab} `}downloads.</div>
-      ) : pageCount > 1 ? (
+      )}
+      {filtered.length > 0 && pageCount > 1 && (
         <div className="playlist-pager">
           <button type="button" className="secondary compact" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
             Previous
@@ -156,7 +162,14 @@ export function DownloadList({ items, onCancel, onRetry, onDelete }: {
             Next
           </button>
         </div>
-      ) : null}
+      )}
+      {tab !== 'active' && hasMoreHistory && onLoadOlder && (
+        <div className="playlist-pager">
+          <button type="button" className="secondary compact" disabled={loadingOlder} onClick={onLoadOlder}>
+            {loadingOlder ? 'Loading…' : 'Load older downloads'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,3 +1,7 @@
+# Lazy annotations so this repo's `list` method doesn't shadow the builtin
+# for the `list[...]` return annotations on methods defined after it.
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -138,6 +142,45 @@ class SqliteDownloadRepository(DownloadRepository):
         async with aiosqlite.connect(self.database_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute('SELECT * FROM downloads ORDER BY created_at DESC')
+            return [self._row_to_job(row) for row in await cursor.fetchall()]
+
+    # Terminal states: a job here is finished and lives in history. Everything
+    # else (queued/running/paused) is "active" and always rides the live
+    # snapshot regardless of how much history has accumulated.
+    _TERMINAL_STATUSES = ('completed', 'failed', 'cancelled')
+
+    async def list_recent(self, terminal_limit: int) -> list[DownloadJob]:
+        """Every active job plus the most recent `terminal_limit` finished
+        ones, newest-first. This is what the SSE snapshot ships, so the live
+        payload stays bounded no matter how long the history grows."""
+        placeholders = ','.join('?' * len(self._TERMINAL_STATUSES))
+        async with aiosqlite.connect(self.database_path) as db:
+            db.row_factory = aiosqlite.Row
+            active = await db.execute(
+                f'SELECT * FROM downloads WHERE status NOT IN ({placeholders}) ORDER BY created_at DESC',
+                self._TERMINAL_STATUSES,
+            )
+            active_rows = await active.fetchall()
+            terminal = await db.execute(
+                f'SELECT * FROM downloads WHERE status IN ({placeholders}) ORDER BY created_at DESC LIMIT ?',
+                (*self._TERMINAL_STATUSES, max(0, terminal_limit)),
+            )
+            terminal_rows = await terminal.fetchall()
+        jobs = [self._row_to_job(row) for row in (*active_rows, *terminal_rows)]
+        jobs.sort(key=lambda job: job.created_at, reverse=True)
+        return jobs
+
+    async def list_terminal_page(self, limit: int, offset: int) -> list[DownloadJob]:
+        """A page of finished (history) jobs, newest-first. Ordinary offset
+        paging -- these rows don't move once terminal."""
+        placeholders = ','.join('?' * len(self._TERMINAL_STATUSES))
+        async with aiosqlite.connect(self.database_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f'SELECT * FROM downloads WHERE status IN ({placeholders}) '
+                'ORDER BY created_at DESC LIMIT ? OFFSET ?',
+                (*self._TERMINAL_STATUSES, max(0, limit), max(0, offset)),
+            )
             return [self._row_to_job(row) for row in await cursor.fetchall()]
 
     async def update(self, job: DownloadJob) -> None:

@@ -259,6 +259,16 @@ export interface CollectionDownloadRequest {
   retries?: number;
 }
 
+export interface DownloadHistoryQuery {
+  limit?: number;
+  offset?: number;
+}
+
+export interface DownloadHistoryResponse {
+  items: DownloadItem[];
+  has_more: boolean;
+}
+
 export interface UpdateCheck {
   current: string | null;
   latest: string | null;

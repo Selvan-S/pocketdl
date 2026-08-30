@@ -126,6 +126,12 @@ class UpdateCheckResponse(BaseModel):
     error: str | None = None
 
 
+class DownloadHistoryResponse(BaseModel):
+    items: list[DownloadResponse]
+    # True when older finished downloads exist beyond this page.
+    has_more: bool
+
+
 class SystemStatusResponse(BaseModel):
     app_version: str
     yt_dlp_version: str | None

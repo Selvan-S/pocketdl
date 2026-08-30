@@ -27,6 +27,7 @@ from .schemas import (
     CollectionRenameRequest,
     CollectionResponse,
     DownloadCreateRequest,
+    DownloadHistoryResponse,
     DownloadPresetCreateRequest,
     DownloadPresetResponse,
     DownloadResponse,
@@ -225,6 +226,33 @@ async def health() -> dict[str, str]:
 async def list_downloads(request: Request) -> list[DownloadResponse]:
     jobs = await request.app.state.repository.list()
     return [to_response(job) for job in jobs]
+
+
+# How many finished downloads the live snapshot carries alongside the active
+# ones. Older history is paged in on demand via /downloads/history, so the SSE
+# payload stays bounded no matter how long the queue's history grows.
+_SNAPSHOT_TERMINAL_LIMIT = 40
+# Page size cap for history requests.
+_HISTORY_MAX_LIMIT = 100
+
+
+@router.get('/downloads/history', response_model=DownloadHistoryResponse)
+async def download_history(
+    request: Request,
+    limit: int = Query(default=40, ge=1, le=_HISTORY_MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+) -> DownloadHistoryResponse:
+    """A page of finished downloads (history), newest-first. The live view
+    already holds the active + most recent jobs from the SSE snapshot; this
+    is how the UI reaches older ones without shipping them all on every
+    snapshot."""
+    # Fetch one extra to tell whether there's another page, without a count.
+    jobs = await request.app.state.repository.list_terminal_page(limit + 1, offset)
+    has_more = len(jobs) > limit
+    return DownloadHistoryResponse(
+        items=[to_response(job) for job in jobs[:limit]],
+        has_more=has_more,
+    )
 
 
 @router.post('/downloads', response_model=DownloadResponse, status_code=status.HTTP_201_CREATED)
@@ -434,6 +462,14 @@ _EVENT_HEARTBEAT_SECONDS = 15.0
 _EVENT_MIN_INTERVAL_SECONDS = 0.4
 
 
+async def _snapshot_downloads(request: Request) -> list[DownloadResponse]:
+    """The bounded download list for the SSE snapshot: all active jobs plus
+    the most recent finished ones. Keeps the pushed payload from growing with
+    history -- older jobs are reached via /downloads/history."""
+    jobs = await request.app.state.repository.list_recent(_SNAPSHOT_TERMINAL_LIMIT)
+    return [to_response(job) for job in jobs]
+
+
 async def _event_snapshot(request: Request) -> dict:
     """Everything the PWA's old refresh loop fetched, in one payload.
 
@@ -441,7 +477,7 @@ async def _event_snapshot(request: Request) -> dict:
     than re-querying, so the two can never disagree.
     """
     downloads, system, captures, settings_payload, collections = await asyncio.gather(
-        list_downloads(request),
+        _snapshot_downloads(request),
         system_status(request),
         list_captures(request),
         get_settings_route(request),

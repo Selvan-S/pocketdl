@@ -9,6 +9,8 @@ import type {
   CollectionItem,
   CollectionItemsQuery,
   DownloadCreateRequest,
+  DownloadHistoryQuery,
+  DownloadHistoryResponse,
   DownloadItem,
   DownloadPreset,
   DownloadPresetCreateRequest,
@@ -66,6 +68,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listDownloads: () => request<DownloadItem[]>('/downloads'),
+  downloadHistory: (query: DownloadHistoryQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.limit != null) params.set('limit', String(query.limit));
+    if (query.offset != null) params.set('offset', String(query.offset));
+    const suffix = params.toString();
+    return request<DownloadHistoryResponse>(`/downloads/history${suffix ? `?${suffix}` : ''}`);
+  },
   createDownload: (payload: DownloadCreateRequest) => request<DownloadItem>('/downloads', { method: 'POST', body: JSON.stringify(payload) }),
   analyze: (payload: Pick<DownloadCreateRequest, 'url' | 'request_context'>) => request<AnalyzeResponse>('/analyze', { method: 'POST', body: JSON.stringify(payload) }),
   cancelDownload: (id: string) => request<DownloadItem>(`/downloads/${id}/cancel`, { method: 'POST' }),
