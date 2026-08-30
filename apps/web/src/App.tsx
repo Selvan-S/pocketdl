@@ -19,6 +19,15 @@ import './styles.css';
 
 const NOTIFICATIONS_STORAGE_KEY = 'pocketdl.notifications';
 const SETUP_STORAGE_KEY = 'pocketdl.setupComplete';
+const TAB_STORAGE_KEY = 'pocketdl.tab';
+
+type Tab = 'download' | 'captures' | 'instagram' | 'storage';
+const TABS: Array<{ value: Tab; label: string }> = [
+  { value: 'download', label: 'Download' },
+  { value: 'captures', label: 'Captures' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'storage', label: 'Storage' },
+];
 
 /** Structural equality by serialisation. The payloads here are small,
  * JSON-derived, and compared once per pushed frame, so this is cheaper than
@@ -73,6 +82,19 @@ export default function App() {
       return false;
     }
   });
+  const [tab, setTab] = useState<Tab>(() => {
+    try {
+      const stored = localStorage.getItem(TAB_STORAGE_KEY);
+      return stored === 'captures' || stored === 'instagram' || stored === 'storage' ? stored : 'download';
+    } catch {
+      return 'download';
+    }
+  });
+
+  const selectTab = useCallback((next: Tab) => {
+    setTab(next);
+    try { localStorage.setItem(TAB_STORAGE_KEY, next); } catch { /* ignore */ }
+  }, []);
 
   // The 2s poll and user actions (delete, cancel, ...) both call refresh(),
   // so calls can be in flight concurrently. Without this guard, a poll that
@@ -171,6 +193,12 @@ export default function App() {
   // Supports the extension popup's "Open" action (?capture=<id>): scrolls to
   // and briefly highlights the matching capture once it has loaded, then
   // strips the query param so a page refresh doesn't re-trigger it.
+  // A deep link to a capture must land on the Captures screen for the card to
+  // exist in the DOM.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('capture')) selectTab('captures');
+  }, [selectTab]);
+
   const scrolledToCaptureRef = useRef(false);
   useEffect(() => {
     if (scrolledToCaptureRef.current || captures.length === 0) return;
@@ -186,7 +214,7 @@ export default function App() {
     const url = new URL(window.location.href);
     url.searchParams.delete('capture');
     window.history.replaceState(null, '', url.toString());
-  }, [captures]);
+  }, [captures, tab]);
 
   // Fire a desktop notification when a download or a whole playlist finishes,
   // if the user opted in and granted permission. The detection is pure and
@@ -485,13 +513,35 @@ export default function App() {
         />
       )}
 
+      <nav className="tab-bar">
+        {TABS.map(({ value, label }) => {
+          const badge = value === 'download'
+            ? (status ? status.active_downloads + status.queued_downloads : 0)
+            : value === 'captures' ? captures.length
+              : value === 'instagram' ? collections.length : 0;
+          return (
+            <button
+              key={value}
+              type="button"
+              className={`tab-item ${tab === value ? 'active' : ''}`}
+              onClick={() => selectTab(value)}
+            >
+              {label}{badge ? <span className="tab-badge">{badge}</span> : null}
+            </button>
+          );
+        })}
+      </nav>
+
+      {message && <div className="message" role="status">{message}</div>}
+
+      {tab === 'download' && (
       <section className="panel hero-panel">
         <div className="section-heading">
           <div>
             <div className="eyebrow">QUICK DOWNLOAD</div>
             <h2>Paste a URL</h2>
           </div>
-          <span className="section-note">Use Browser Capture for difficult HLS/DASH sites.</span>
+          <span className="section-note">Use the Captures tab for difficult HLS/DASH sites.</span>
         </div>
         <DownloadForm
           onSubmit={addDownload}
@@ -501,18 +551,18 @@ export default function App() {
           onSavePreset={savePreset}
           onDeletePreset={deletePreset}
         />
-        {message && <div className="message" role="status">{message}</div>}
       </section>
+      )}
 
-      <details className="section-collapsible" open>
-        <summary className="section-collapsible-summary">
+      {tab === 'captures' && (
+      <section className="panel">
+        <div className="section-heading">
           <div>
             <div className="eyebrow">BROWSER CAPTURE</div>
             <h2>Captured streams</h2>
             <span>{captures.length} unique stream(s) · newest signed URL is kept automatically</span>
           </div>
-          <span className="section-chevron">−</span>
-        </summary>
+        </div>
         <CaptureList
           items={captures}
           onDownload={async (id: string, payload: CaptureDownloadRequest) => {
@@ -531,34 +581,36 @@ export default function App() {
             }
           }}
         />
-      </details>
+      </section>
+      )}
 
-      <details className="section-collapsible">
-        <summary className="section-collapsible-summary">
+      {tab === 'instagram' && (
+      <section className="panel">
+        <div className="section-heading">
           <div>
             <div className="eyebrow">INSTAGRAM</div>
             <h2>Profiles &amp; playlists</h2>
             <span>Browse a profile, save a selection, download it on demand</span>
           </div>
-          <span className="section-chevron">−</span>
-        </summary>
+        </div>
         <InstagramPanel
           collections={collections}
           onCollectionsChanged={refresh}
           onMessage={setMessage}
           onDownloadQueued={refresh}
         />
-      </details>
+      </section>
+      )}
 
-      <details className="section-collapsible" open>
-        <summary className="section-collapsible-summary">
+      {tab === 'download' && (
+      <section className="panel">
+        <div className="section-heading">
           <div>
             <div className="eyebrow">DOWNLOAD QUEUE</div>
             <h2>Downloads</h2>
             <span>{downloads.length} item(s) · {status?.active_downloads ?? 0} active · {status?.queued_downloads ?? 0} queued</span>
           </div>
-          <span className="section-chevron">−</span>
-        </summary>
+        </div>
         <div className="section-toolbar-actions">
           <button className="secondary compact" onClick={() => void toggleNotifications()}>
             {notificationsEnabled ? 'Notifications: on' : 'Notify when done'}
@@ -601,9 +653,10 @@ export default function App() {
             }
           }}
         />
-      </details>
+      </section>
+      )}
 
-      <StoragePanel />
+      {tab === 'storage' && <StoragePanel />}
 
       <footer>
         <span className="footer-path">Downloads: {settings?.download_directory ?? 'Unavailable'}</span>
