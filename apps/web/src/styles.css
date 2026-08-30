@@ -388,6 +388,8 @@ button.compact { min-height: 38px; padding: 0 12px; font-size: 12px; }
 
 /* Instagram profile browser + playlists (Phase 5 pilot) */
 .instagram-panel { display: grid; gap: 18px; }
+.instagram-warning { padding: 10px 14px; border: 1px solid #3a2f1c; border-radius: 12px; background: #241d10; color: #ffce8a; font-size: 12px; line-height: 1.5; }
+.instagram-warning strong { color: #ffdca6; }
 .instagram-session { display: grid; gap: 10px; }
 .instagram-session-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .instagram-session-form { display: grid; gap: 8px; padding: 12px; border: 1px solid #202b44; background: #0c1323; border-radius: 12px; }
