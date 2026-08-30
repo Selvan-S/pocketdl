@@ -1,5 +1,87 @@
 import { EXTENSION_PROTOCOL_HEADER, getBackendUrl } from './config.js';
-import type { CaptureAttemptStatus, CaptureType, PendingRequest } from './models.js';
+import type { CaptureAttemptStatus, CaptureType, PendingRequest, SendAttemptStatus } from './models.js';
+
+// --- "Send to PocketDL" context menu ---------------------------------------
+// Right-click a link, video, audio, image, or page and queue its URL as a
+// standard (yt-dlp) download -- distinct from passive capture, which watches
+// media requests. Uses /api/downloads, which has no extension-only guard, so
+// no protocol header is needed here.
+
+const CONTEXT_MENU_ID = 'pocketdl-send';
+
+function createContextMenu(): void {
+  // removeAll first so re-running onInstalled (an update) doesn't throw on a
+  // duplicate id.
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_ID,
+      title: 'Send to PocketDL',
+      contexts: ['page', 'link', 'video', 'audio', 'image'],
+    });
+  });
+}
+
+async function flashBadge(ok: boolean): Promise<void> {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: ok ? '#1f9d55' : '#c0392b' });
+    await chrome.action.setBadgeText({ text: ok ? '✓' : '!' });
+    // Best-effort clear; the service worker may be evicted first, in which
+    // case the badge lingers until the next event, which is harmless.
+    setTimeout(() => { void chrome.action.setBadgeText({ text: '' }); }, 4000);
+  } catch {
+    // Badge is only feedback; never let it break the send.
+  }
+}
+
+async function recordSendAttempt(status: SendAttemptStatus): Promise<void> {
+  await chrome.storage.local.set({ lastSendAttempt: status });
+}
+
+async function sendUrlToBackend(targetUrl: string, pageUrl: string | undefined): Promise<void> {
+  if (!/^https?:\/\//i.test(targetUrl)) {
+    await recordSendAttempt({ ok: false, at: Date.now(), url: targetUrl, error: 'Only http(s) URLs can be sent.' });
+    await flashBadge(false);
+    return;
+  }
+  const backendUrl = await getBackendUrl();
+  try {
+    const response = await fetch(`${backendUrl}/api/downloads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: targetUrl,
+        // Give yt-dlp the originating page as context; the referer often
+        // matters for sites that gate media on it.
+        request_context: pageUrl ? { page_url: pageUrl, referer: pageUrl, impersonation: 'auto' } : { impersonation: 'auto' },
+      }),
+    });
+    if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+    await recordSendAttempt({ ok: true, at: Date.now(), url: targetUrl });
+    await flashBadge(true);
+  } catch (error) {
+    await recordSendAttempt({
+      ok: false,
+      at: Date.now(),
+      url: targetUrl,
+      error: error instanceof Error ? error.message : 'Failed to reach PocketDL',
+    });
+    await flashBadge(false);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => createContextMenu());
+// Service workers are torn down when idle; recreate the menu on browser
+// startup too so it survives a restart even if Chrome dropped it.
+chrome.runtime.onStartup.addListener(() => createContextMenu());
+
+chrome.contextMenus.onClicked.addListener((info, _tab) => {
+  if (info.menuItemId !== CONTEXT_MENU_ID) return;
+  // Prefer the most specific target: a clicked link, then a media element's
+  // source, then the page itself.
+  const target = info.linkUrl || info.srcUrl || info.pageUrl;
+  if (!target) return;
+  void sendUrlToBackend(target, info.pageUrl);
+});
 
 const pending = new Map<string, PendingRequest>();
 const recentCaptureKeys = new Map<string, number>();

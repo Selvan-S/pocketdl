@@ -1,5 +1,5 @@
 import { DEFAULT_BACKEND_URL, getBackendUrl, normalizeBackendUrl } from './config.js';
-import type { CaptureAttemptStatus } from './models.js';
+import type { CaptureAttemptStatus, SendAttemptStatus } from './models.js';
 
 let latestItems: CaptureItem[] = [];
 let latestDownloads: DownloadSummary[] = [];
@@ -250,6 +250,24 @@ function renderBanner(attempt: CaptureAttemptStatus | null): void {
   `;
 }
 
+function renderSendBanner(attempt: SendAttemptStatus | null): void {
+  const banner = document.querySelector<HTMLDivElement>('#send-banner');
+  if (!banner) return;
+  if (!attempt) {
+    banner.classList.remove('visible', 'ok');
+    banner.innerHTML = '';
+    return;
+  }
+  banner.classList.add('visible');
+  banner.classList.toggle('ok', attempt.ok);
+  const when = escapeHtml(new Date(attempt.at).toLocaleTimeString());
+  banner.innerHTML = attempt.ok
+    ? `<span>Sent to PocketDL at ${when}.</span>
+       <button class="dismiss" data-action="dismiss-send" type="button">Dismiss</button>`
+    : `<span>Send to PocketDL failed at ${when}: ${escapeHtml(attempt.error ?? 'unknown error')}.</span>
+       <button class="dismiss" data-action="dismiss-send" type="button">Dismiss</button>`;
+}
+
 async function refresh(): Promise<void> {
   const status = document.querySelector<HTMLDivElement>('#status');
   try {
@@ -264,8 +282,12 @@ async function refresh(): Promise<void> {
   } catch (error) {
     if (status) status.textContent = `Offline · ${error instanceof Error ? error.message : 'cannot connect'}`;
   }
-  const { lastCaptureAttempt } = await chrome.storage.local.get<{ lastCaptureAttempt: CaptureAttemptStatus | null }>({ lastCaptureAttempt: null });
+  const { lastCaptureAttempt, lastSendAttempt } = await chrome.storage.local.get<{
+    lastCaptureAttempt: CaptureAttemptStatus | null;
+    lastSendAttempt: SendAttemptStatus | null;
+  }>({ lastCaptureAttempt: null, lastSendAttempt: null });
   renderBanner(lastCaptureAttempt);
+  renderSendBanner(lastSendAttempt);
 }
 
 document.querySelector<HTMLFormElement>('#settings')?.addEventListener('submit', async (event) => {
@@ -313,6 +335,12 @@ document.querySelector<HTMLDivElement>('#banner')?.addEventListener('click', (ev
   const target = event.target;
   if (!(target instanceof HTMLButtonElement) || target.dataset.action !== 'dismiss-banner') return;
   void chrome.storage.local.set({ lastCaptureAttempt: null }).then(() => renderBanner(null));
+});
+
+document.querySelector<HTMLDivElement>('#send-banner')?.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement) || target.dataset.action !== 'dismiss-send') return;
+  void chrome.storage.local.set({ lastSendAttempt: null }).then(() => renderSendBanner(null));
 });
 
 const versionLabel = document.querySelector<HTMLSpanElement>('#version');

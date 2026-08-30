@@ -39,6 +39,10 @@
     #banner { display: none; margin: 10px 0; padding: 8px 10px; border-radius: 9px; background: #3a2720; color: #ffbe92; font-size: 11px; }
     #banner.visible { display: grid; gap: 6px; }
     #banner button.dismiss { justify-self: start; background: transparent; color: #ffbe92; text-decoration: underline; padding: 0; font-weight: 400; }
+    #send-banner { display: none; margin: 10px 0; padding: 8px 10px; border-radius: 9px; background: #3a2720; color: #ffbe92; font-size: 11px; }
+    #send-banner.visible { display: grid; gap: 6px; }
+    #send-banner.ok { background: #17301f; color: #9fe6b0; }
+    #send-banner button.dismiss { justify-self: start; background: transparent; color: inherit; text-decoration: underline; padding: 0; font-weight: 400; }
   </style>
 </head>
 <body>
@@ -51,6 +55,7 @@
   </form>
   <div id="status">Checking…</div>
   <div id="banner"></div>
+  <div id="send-banner"></div>
   <div id="captures"></div>
   <script type="module" src="dist/popup.js"></script>
 </body>

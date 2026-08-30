@@ -19,3 +19,14 @@ export interface CaptureAttemptStatus {
   at: number;
   error?: string;
 }
+
+// Written by background.ts after a "Send to PocketDL" context-menu action,
+// read by popup.ts so a failed send (backend offline, unsupported URL) is
+// visible rather than silently dropped -- the standard-download counterpart
+// of CaptureAttemptStatus.
+export interface SendAttemptStatus {
+  ok: boolean;
+  at: number;
+  url: string;
+  error?: string;
+}

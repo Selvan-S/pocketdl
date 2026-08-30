@@ -1,6 +1,23 @@
 declare namespace chrome {
   namespace runtime {
     function getManifest(): { version: string };
+    interface SimpleEvent { addListener(callback: () => void): void; }
+    const onInstalled: SimpleEvent;
+    const onStartup: SimpleEvent;
+  }
+
+  namespace action {
+    function setBadgeText(details: { text: string; tabId?: number }): Promise<void>;
+    function setBadgeBackgroundColor(details: { color: string; tabId?: number }): Promise<void>;
+  }
+
+  namespace contextMenus {
+    interface CreateProperties { id?: string; title?: string; contexts?: string[] }
+    interface OnClickData { menuItemId: string | number; linkUrl?: string; srcUrl?: string; pageUrl?: string }
+    function create(properties: CreateProperties, callback?: () => void): void;
+    function removeAll(callback?: () => void): void;
+    interface ClickedEvent { addListener(callback: (info: OnClickData, tab?: chrome.tabs.Tab) => void): void; }
+    const onClicked: ClickedEvent;
   }
 
   namespace storage {
