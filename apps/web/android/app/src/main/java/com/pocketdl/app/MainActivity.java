@@ -9,6 +9,7 @@ import com.chaquo.python.PyObject;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(CaptureBrowserPlugin.class);
         super.onCreate(savedInstanceState);
 
         if (!Python.isStarted()) {

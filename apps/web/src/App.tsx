@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { api, EVENTS_URL } from './api/client';
 import { DownloadForm } from './components/DownloadForm';
@@ -23,6 +23,8 @@ import './styles.css';
 const NOTIFICATIONS_STORAGE_KEY = 'pocketdl.notifications';
 const SETUP_STORAGE_KEY = 'pocketdl.setupComplete';
 const TAB_STORAGE_KEY = 'pocketdl.tab';
+
+const CaptureBrowser = Capacitor.isNativePlatform() ? registerPlugin('CaptureBrowser') : null;
 
 type Tab = 'download' | 'captures' | 'instagram' | 'storage';
 const TABS: Array<{ value: Tab; label: string }> = [
@@ -636,6 +638,11 @@ export default function App() {
             <h2>Captured streams</h2>
             <span>{captures.length} unique stream(s) · newest signed URL is kept automatically</span>
           </div>
+          {CaptureBrowser && (
+            <button className="primary" onClick={() => void CaptureBrowser.open({ url: 'https://google.com' })}>
+              Open Web Browser
+            </button>
+          )}
         </div>
         <CaptureList
           items={captures}
