@@ -1,9 +1,10 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 
 
-class Platform(StrEnum):
+class Platform(str, Enum):
     """Where a collection's items come from.
 
     INSTAGRAM: items discovered from a profile (downloaded via instaloader).
@@ -25,7 +26,7 @@ PLATFORM_FOLDERS: dict[Platform, str] = {
 }
 
 
-class InstagramContentType(StrEnum):
+class InstagramContentType(str, Enum):
     POST = 'post'
     CAROUSEL = 'carousel'
     REEL = 'reel'

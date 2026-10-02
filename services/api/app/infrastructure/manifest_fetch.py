@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Fetch a captured playlist's text using the browser's own request context.
 
 Uses the standard library rather than adding an HTTP client dependency: a

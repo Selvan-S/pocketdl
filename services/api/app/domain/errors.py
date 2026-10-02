@@ -1,7 +1,8 @@
-from enum import StrEnum
+from __future__ import annotations
+from enum import Enum
 
 
-class DownloadErrorCategory(StrEnum):
+class DownloadErrorCategory(str, Enum):
     HTTP_401 = 'http_401'
     HTTP_403 = 'http_403'
     HTTP_404 = 'http_404'

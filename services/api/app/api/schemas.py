@@ -1,9 +1,10 @@
+from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, validator
 
 from ..domain.captures import CaptureStatus, CaptureType, VariantStatus
 from ..domain.errors import DownloadErrorCategory
@@ -18,7 +19,7 @@ class RequestContextRequest(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     impersonation: Literal['none', 'auto', 'chrome'] = 'auto'
 
-    @field_validator('page_url', 'referer', 'origin')
+    @validator('page_url', 'referer', 'origin')
     @classmethod
     def validate_http_url(cls, value: str | None) -> str | None:
         if value is None:
@@ -28,7 +29,7 @@ class RequestContextRequest(BaseModel):
             raise ValueError('URL must use http or https.')
         return value
 
-    @field_validator('headers')
+    @validator('headers')
     @classmethod
     def reject_sensitive_headers(cls, value: dict[str, str]) -> dict[str, str]:
         sensitive = {'cookie', 'authorization', 'proxy-authorization', 'set-cookie'}
@@ -59,7 +60,7 @@ class DownloadCreateRequest(BaseModel):
     conflict_strategy: Literal['skip', 'overwrite', 'rename'] = 'skip'
     request_context: RequestContextRequest = Field(default_factory=RequestContextRequest)
 
-    @field_validator('subtitle_langs')
+    @validator('subtitle_langs')
     @classmethod
     def validate_subtitle_langs(cls, value: str) -> str:
         # "all" or a comma-separated list of language codes -- the same shape
@@ -68,21 +69,21 @@ class DownloadCreateRequest(BaseModel):
             raise ValueError('subtitle_langs must be "all" or comma-separated language codes like "en,es".')
         return value
 
-    @field_validator('audio_language')
+    @validator('audio_language')
     @classmethod
     def validate_audio_language(cls, value: str | None) -> str | None:
         if value is not None and not re.fullmatch(r'[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?', value):
             raise ValueError('audio_language must be a language code like "en" or "pt-BR".')
         return value
 
-    @field_validator('format_id')
+    @validator('format_id')
     @classmethod
     def validate_format_id(cls, value: str | None) -> str | None:
         if value is not None and not re.fullmatch(r'[A-Za-z0-9_.+-]{1,100}', value):
             raise ValueError('format_id must be a plain yt-dlp format identifier.')
         return value
 
-    @field_validator('url')
+    @validator('url')
     @classmethod
     def validate_url(cls, value: str) -> str:
         parsed = urlparse(value)
@@ -146,7 +147,7 @@ class AnalyzeRequest(BaseModel):
     url: str
     request_context: RequestContextRequest = Field(default_factory=RequestContextRequest)
 
-    @field_validator('url')
+    @validator('url')
     @classmethod
     def validate_url(cls, value: str) -> str:
         parsed = urlparse(value)
@@ -192,7 +193,7 @@ class CaptureCreateRequest(BaseModel):
     content_type: str | None = Field(default=None, max_length=300)
     content_length_bytes: int | None = Field(default=None, ge=0)
 
-    @field_validator('media_url', 'page_url', 'referer')
+    @validator('media_url', 'page_url', 'referer')
     @classmethod
     def validate_http_url(cls, value: str | None) -> str | None:
         if value is None:
@@ -202,7 +203,7 @@ class CaptureCreateRequest(BaseModel):
             raise ValueError('URL must use http or https.')
         return value
 
-    @field_validator('headers')
+    @validator('headers')
     @classmethod
     def reject_sensitive_headers(cls, value: dict[str, str]) -> dict[str, str]:
         sensitive = {'cookie', 'authorization', 'proxy-authorization', 'set-cookie'}
@@ -311,7 +312,7 @@ class InstagramProfilePreviewRequest(BaseModel):
     # above it.
     limit: int | None = Field(default=None, ge=1, le=200)
 
-    @field_validator('profile_url')
+    @validator('profile_url')
     @classmethod
     def validate_profile_url(cls, value: str) -> str:
         parsed = urlparse(value)
@@ -319,7 +320,7 @@ class InstagramProfilePreviewRequest(BaseModel):
             raise ValueError('profile_url must use http or https.')
         return value
 
-    @field_validator('content_types')
+    @validator('content_types')
     @classmethod
     def validate_content_types(cls, value: list[str]) -> list[str]:
         if not value:
@@ -399,7 +400,7 @@ class CollectionAddUrlsRequest(BaseModel):
 
     urls: list[str] = Field(min_length=1, max_length=500)
 
-    @field_validator('urls')
+    @validator('urls')
     @classmethod
     def validate_urls(cls, value: list[str]) -> list[str]:
         cleaned: list[str] = []
@@ -444,7 +445,7 @@ class CollectionItemAddRequest(BaseModel):
     external_id: str | None = Field(default=None, max_length=200)
     posted_at: datetime | None = None
 
-    @field_validator('source_url')
+    @validator('source_url')
     @classmethod
     def validate_source_url(cls, value: str) -> str:
         parsed = urlparse(value)

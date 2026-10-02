@@ -1,11 +1,12 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 
 from .errors import DownloadErrorCategory
 
 
-class DownloadStatus(StrEnum):
+class DownloadStatus(str, Enum):
     QUEUED = 'queued'
     RUNNING = 'running'
     PAUSED = 'paused'
@@ -14,18 +15,18 @@ class DownloadStatus(StrEnum):
     CANCELLED = 'cancelled'
 
 
-class ImpersonationMode(StrEnum):
+class ImpersonationMode(str, Enum):
     NONE = 'none'
     AUTO = 'auto'
     CHROME = 'chrome'
 
 
-class DownloadSourceType(StrEnum):
+class DownloadSourceType(str, Enum):
     STANDARD = 'standard'
     CAPTURED = 'captured'
 
 
-class DownloadEngine(StrEnum):
+class DownloadEngine(str, Enum):
     """Which tool runs the job -- a subprocess for YT_DLP/GALLERY_DL, an
     in-process library call for INSTALOADER. Orthogonal to
     DownloadSourceType: source_type is about how the URL was obtained (a
@@ -37,7 +38,7 @@ class DownloadEngine(StrEnum):
     INSTALOADER = 'instaloader'
 
 
-class ConflictStrategy(StrEnum):
+class ConflictStrategy(str, Enum):
     """What to do when the target file already exists.
 
     SKIP is the default and matches yt-dlp's own behaviour (don't re-download

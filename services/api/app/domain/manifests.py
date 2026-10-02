@@ -1,3 +1,4 @@
+from __future__ import annotations
 """HLS master-playlist parsing.
 
 A master playlist advertises the same content at several qualities, each as

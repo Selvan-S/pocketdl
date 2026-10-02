@@ -1,3 +1,4 @@
+from __future__ import annotations
 # Annotations are lazy strings so the `list` method in DownloadRepository
 # below doesn't shadow the builtin for later `list[...]` annotations in the
 # same class body.

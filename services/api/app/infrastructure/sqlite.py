@@ -1,3 +1,4 @@
+from __future__ import annotations
 # Lazy annotations so this repo's `list` method doesn't shadow the builtin
 # for the `list[...]` return annotations on methods defined after it.
 from __future__ import annotations

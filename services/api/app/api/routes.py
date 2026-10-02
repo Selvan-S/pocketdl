@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import json
 import logging
@@ -540,11 +541,11 @@ async def _event_snapshot(request: Request) -> dict:
     # tick, is exactly the cost this avoids; the counts are enough to drive a
     # live badge and let an open playlist decide when to re-fetch its page.
     return {
-        'downloads': [item.model_dump(mode='json') for item in (ok(downloads) or [])],
-        'status': (payload.model_dump(mode='json') if (payload := ok(system)) else None),
-        'captures': [item.model_dump(mode='json') for item in (ok(captures) or [])],
-        'settings': (payload.model_dump(mode='json') if (payload := ok(settings_payload)) else None),
-        'collections': [item.model_dump(mode='json') for item in (ok(collections) or [])],
+        'downloads': [item.dict() for item in (ok(downloads) or [])],
+        'status': (payload.dict() if (payload := ok(system)) else None),
+        'captures': [item.dict() for item in (ok(captures) or [])],
+        'settings': (payload.dict() if (payload := ok(settings_payload)) else None),
+        'collections': [item.dict() for item in (ok(collections) or [])],
     }
 
 

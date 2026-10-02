@@ -1,29 +1,30 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 from urllib.parse import urlparse, urlunparse
 import hashlib
 import re
 
 
-class CaptureType(StrEnum):
+class CaptureType(str, Enum):
     HLS = 'hls'
     DASH = 'dash'
     MEDIA = 'media'
 
 
-class CaptureStatus(StrEnum):
+class CaptureStatus(str, Enum):
     CAPTURED = 'captured'
     USED = 'used'
 
 
-class MetadataStatus(StrEnum):
+class MetadataStatus(str, Enum):
     PENDING = 'pending'
     READY = 'ready'
     FAILED = 'failed'
 
 
-class VariantStatus(StrEnum):
+class VariantStatus(str, Enum):
     """Progress of resolving a capture's quality variants.
 
     ``NONE`` means the question does not apply (a direct media or DASH

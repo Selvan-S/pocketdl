@@ -24,7 +24,10 @@ const NOTIFICATIONS_STORAGE_KEY = 'pocketdl.notifications';
 const SETUP_STORAGE_KEY = 'pocketdl.setupComplete';
 const TAB_STORAGE_KEY = 'pocketdl.tab';
 
-const CaptureBrowser = Capacitor.isNativePlatform() ? registerPlugin('CaptureBrowser') : null;
+interface CaptureBrowserPlugin { open(options: { url: string }): Promise<void>; }
+const CaptureBrowser = Capacitor.isNativePlatform()
+  ? registerPlugin<CaptureBrowserPlugin>('CaptureBrowser')
+  : null;
 
 type Tab = 'download' | 'captures' | 'instagram' | 'storage';
 const TABS: Array<{ value: Tab; label: string }> = [
@@ -526,7 +529,7 @@ export default function App() {
       const customEvent = e as CustomEvent<string>;
       const url = customEvent.detail;
       try {
-        await api.createDownload({ url, preset: 'video' });
+        await api.createDownload({ url, preset: 'best' });
         setMessage('Added shared URL to queue.');
         await refresh();
         selectTab('download');

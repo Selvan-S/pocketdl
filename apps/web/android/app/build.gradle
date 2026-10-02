@@ -16,18 +16,31 @@ android {
         }
         python {
             version "3.11"
-            buildPython "python"
-            srcDir "../../../../services/api"
+            if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+                buildPython "py", "-3.11"
+            } else {
+                buildPython "python3.11"
+            }
             pip {
-                install "fastapi"
+                install "pydantic<2.0.0"
+                install "fastapi<0.100.0"
                 install "uvicorn"
                 install "yt-dlp"
+                install "aiosqlite"
+                install "python-multipart"
+                install "gallery-dl"
+                install "instaloader"
             }
         }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    sourceSets {
+        main {
+            python.srcDir "../../../../services/api"
         }
     }
     buildTypes {

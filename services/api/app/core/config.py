@@ -1,9 +1,10 @@
+from __future__ import annotations
 from functools import lru_cache
 import os
 from pathlib import Path
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from pydantic import BaseSettings, Field
 
 from .settings_store import load_download_directory, load_setting
 
@@ -25,7 +26,10 @@ DEFAULT_FILENAME_TEMPLATE = 'title'
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
+    class Config:
+        env_file = '.env'
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'
 
     app_name: str = 'PocketDL'
     app_version: str = '0.3.0'
