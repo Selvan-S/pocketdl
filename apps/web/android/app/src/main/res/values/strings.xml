@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PocketDL</string>
+    <string name="title_activity_main">PocketDL</string>
+    <string name="package_name">com.pocketdl.app</string>
+    <string name="custom_url_scheme">com.pocketdl.app</string>
+</resources>
