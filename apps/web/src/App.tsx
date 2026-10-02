@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { api, EVENTS_URL } from './api/client';
 import { DownloadForm } from './components/DownloadForm';
 import { DownloadList } from './components/DownloadList';
@@ -227,7 +229,23 @@ export default function App() {
   const prevCollectionCompletion = useRef<Map<string, boolean>>(new Map());
   const collectionsSeeded = useRef(false);
 
-  const notify = useCallback((title: string, body: string) => {
+  const notify = useCallback(async (title: string, body: string) => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await LocalNotifications.schedule({
+          notifications: [{
+            title,
+            body,
+            id: new Date().getTime(),
+            schedule: { at: new Date(Date.now() + 100) },
+          }]
+        });
+      } catch (e) {
+        console.error(e);
+      }
+      return;
+    }
+
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     try {
       new Notification(title, { body });
@@ -264,6 +282,22 @@ export default function App() {
       try { localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, 'off'); } catch { /* ignore */ }
       return;
     }
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const permStatus = await LocalNotifications.requestPermissions();
+        if (permStatus.display === 'granted') {
+          setNotificationsEnabled(true);
+          try { localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, 'on'); } catch { /* ignore */ }
+          setMessage('You’ll be notified when downloads finish.');
+        } else {
+          setMessage('Notification permission was not granted.');
+        }
+      } catch (e) {
+        setMessage('Error requesting notification permissions.');
+      }
+      return;
+    }
+
     if (typeof Notification === 'undefined') {
       setMessage('Notifications are not supported in this browser.');
       return;
@@ -484,6 +518,23 @@ export default function App() {
       return null;
     }
   }
+
+  useEffect(() => {
+    const handleShare = async (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      const url = customEvent.detail;
+      try {
+        await api.createDownload({ url, preset: 'video' });
+        setMessage('Added shared URL to queue.');
+        await refresh();
+        selectTab('download');
+      } catch (error: unknown) {
+        setMessage(error instanceof Error ? error.message : 'Failed to queue shared URL');
+      }
+    };
+    window.addEventListener('onShareIntent', handleShare);
+    return () => window.removeEventListener('onShareIntent', handleShare);
+  }, [refresh, selectTab]);
 
   return (
     <main className="app-shell">

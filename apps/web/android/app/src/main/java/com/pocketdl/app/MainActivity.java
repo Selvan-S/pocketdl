@@ -48,5 +48,23 @@ public class MainActivity extends BridgeActivity {
         Python py = Python.getInstance();
         PyObject androidMain = py.getModule("android_main");
         androidMain.callAttr("start_server", storageDir);
+
+        handleSendIntent(getIntent());
+    }
+
+    @Override
+    public void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        handleSendIntent(intent);
+    }
+
+    private void handleSendIntent(android.content.Intent intent) {
+        if (android.content.Intent.ACTION_SEND.equals(intent.getAction()) && "text/plain".equals(intent.getType())) {
+            String sharedText = intent.getStringExtra(android.content.Intent.EXTRA_TEXT);
+            if (sharedText != null && bridge != null && bridge.getWebView() != null) {
+                String js = "window.dispatchEvent(new CustomEvent('onShareIntent', { detail: '" + sharedText + "' }));";
+                bridge.getWebView().evaluateJavascript(js, null);
+            }
+        }
     }
 }
