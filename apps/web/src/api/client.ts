@@ -25,8 +25,9 @@ import type {
   SystemStatus,
   UpdateCheck,
 } from '../types/api';
+import { Capacitor } from '@capacitor/core';
 
-const API_BASE = '/api';
+const API_BASE = Capacitor.isNativePlatform() ? 'http://127.0.0.1:8787/api' : '/api';
 
 /** URL of the server-sent event stream that replaced polling. Exported as a
  * URL rather than wrapped in a helper because EventSource is constructed and
