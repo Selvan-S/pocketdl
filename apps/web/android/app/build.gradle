@@ -22,14 +22,7 @@ android {
                 buildPython "python3.11"
             }
             pip {
-                install "pydantic<2.0.0"
-                install "fastapi<0.100.0"
-                install "uvicorn"
-                install "yt-dlp"
-                install "aiosqlite"
-                install "python-multipart"
-                install "gallery-dl"
-                install "instaloader"
+                install "-r", "../../../../services/api/requirements.txt"
             }
         }
         aaptOptions {
